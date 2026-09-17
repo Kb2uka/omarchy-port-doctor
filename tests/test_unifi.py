@@ -162,7 +162,8 @@ class CensusTests(unittest.TestCase):
             return fake_opener(request, timeout)
 
         unifi.controller_census(config=self.config(), opener=opener)
-        self.assertTrue(any(("X-api-key", "k") in headers for headers in seen))
+        self.assertTrue(any(headers.get("X-api-key") == "k"
+                            for headers in seen))
 
     def test_failure_is_an_error_string_not_an_exception(self):
         def dead_opener(request, timeout=0):
