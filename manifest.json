@@ -1,0 +1,28 @@
+{
+  "schemaVersion": 1,
+  "id": "kb2uka.port-doctor",
+  "name": "Port Doctor",
+  "version": "0.1.0",
+  "author": "KB2UKA",
+  "license": "MIT",
+  "description": "See everything on your home network: every host, its open ports and services, and every live connection this machine is making.",
+  "kinds": ["bar-widget"],
+  "activation": "on-demand",
+  "entryPoints": {
+    "barWidget": "Panel.qml"
+  },
+  "barWidget": {
+    "displayName": "Port Doctor",
+    "description": "Your home network at a glance: hosts, open ports and services, plus this machine's listening sockets and live connections.",
+    "category": "System",
+    "aliases": ["network", "ports", "lan", "scanner", "connections"],
+    "allowMultiple": false,
+    "defaultSection": "right",
+    "defaults": {
+      "scanIntervalSec": 300
+    },
+    "schema": [
+      { "key": "scanIntervalSec", "type": "integer", "label": "Network rescan interval (seconds)", "min": 30, "max": 3600, "step": 30, "defaultValue": 300 }
+    ]
+  }
+}
