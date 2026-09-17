@@ -26,6 +26,8 @@ Panel {
   property var hostCache: ({})       // ip -> last full record (name/vendor/mac)
   property var lanNetwork: ({})
   property var lanStats: ({})
+  property var lanIdentity: ({})
+  property var controllerInfo: ({})
   property string lanScannedAt: ""
   property bool lanFailed: false
   property string profile: "standard"
@@ -38,6 +40,7 @@ Panel {
   property string machineScannedAt: ""
   property bool machineFailed: false
   property string machineHostname: ""
+  property var machineIdentity: ({})
 
   readonly property bool scanning: lanProcess.running
   readonly property int onlineCount: lanStats.hostsUp || 0
@@ -135,6 +138,8 @@ Panel {
     lanScannedAt = String(payload.scannedAt || "")
     lanNetwork = payload.network || ({})
     lanStats = payload.stats || ({})
+    lanIdentity = payload.identity || ({})
+    controllerInfo = payload.controller || ({})
 
     var incoming = payload.hosts
     var seen = {}
@@ -178,6 +183,9 @@ Panel {
         type: String(prior.type || "unknown"),
         isSelf: !!prior.isSelf, isGateway: !!prior.isGateway,
         via: String(prior.via || "scan"), latencyMs: null, ports: [],
+        network: String(prior.network || ""),
+        vlan: (prior.vlan !== undefined && prior.vlan !== null) ? prior.vlan : null,
+        remoteNet: !!prior.remoteNet,
         online: false, lastSeen: lastSeen[knownIp]
       })
     }
@@ -219,6 +227,7 @@ Panel {
     machineFailed = false
     machineScannedAt = String(payload.scannedAt || "")
     machineHostname = String(payload.hostname || "")
+    machineIdentity = payload.identity || ({})
     machineStats = payload.stats || ({})
     listeners = payload.listeners
     connections = payload.connections || []
@@ -262,6 +271,9 @@ Panel {
       fontMono: root.fontFamily
       hosts: root.hostsAll
       network: root.lanNetwork
+      identity: String(root.lanIdentity.hostname || "") !== ""
+        ? root.lanIdentity : root.machineIdentity
+      controller: root.controllerInfo
       scannedAt: root.lanScannedAt
       scanning: root.scanning
       scanFailed: root.lanFailed

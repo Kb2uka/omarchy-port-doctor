@@ -1,13 +1,20 @@
 import QtQuick
 import "Palette.js" as P
 
-// Settings page: scan profile, and honest notes about where things live.
+// Settings page: scan profile, controller status, and honest notes about
+// where things live.
 Item {
   id: root
   property string fontMono: "monospace"
   property string profile: "standard"
   property var network: ({})
+  property var controller: ({})
   signal profileSelected(string profile)
+
+  function controllerError() {
+    var e = root.controller.error
+    return (e === null || e === undefined) ? "" : String(e)
+  }
 
   Column {
     anchors.fill: parent
@@ -104,6 +111,39 @@ Item {
 
     Text {
       textFormat: Text.PlainText
+      text: "UniFi controller · whole-network view"
+      color: P.text
+      font.family: P.sans
+      font.pixelSize: 13
+      font.weight: Font.DemiBold
+    }
+    Text {
+      textFormat: Text.PlainText
+      width: parent.width - 44
+      text: {
+        if (root.controller.configured === true) {
+          if (root.controllerError() !== "")
+            return "Configured at " + String(root.controller.host || "?")
+              + " but the last read failed: " + root.controllerError()
+          return "Connected to " + String(root.controller.host || "?")
+            + (String(root.controller.site || "") !== ""
+               ? " · site " + String(root.controller.site) : "")
+            + " · " + Number(root.controller.clients || 0) + " clients reported"
+        }
+        if (root.controllerError() !== "")
+          return "A config file was found but ignored: " + root.controllerError()
+        return "Not configured, so the map shows only this subnet. To see every network your UniFi controller manages, create ~/.config/port-doctor/unifi.env with two lines: UNIFI_HOST=<its private IP> and UNIFI_API_KEY=<a read-only local API key>. Port Doctor only ever reads that file, queries nothing but the controller, and probes only private addresses."
+      }
+      color: root.controllerError() !== "" ? P.red : P.secondary
+      font.family: P.sans
+      font.pixelSize: 12
+      wrapMode: Text.WordWrap
+    }
+
+    Rectangle { width: parent.width - 44; height: 1; color: P.border }
+
+    Text {
+      textFormat: Text.PlainText
       text: "Privacy"
       color: P.text
       font.family: P.sans
@@ -113,7 +153,7 @@ Item {
     Text {
       textFormat: Text.PlainText
       width: parent.width - 44
-      text: "Everything Port Doctor knows stays in this window's memory: no files, no uploads, no history between restarts. Scans touch only private LAN addresses with bare TCP connects; hostnames come from DNS PTR and the devices' own mDNS announcements."
+      text: "Everything Port Doctor learns stays in this window's memory: no files written, no uploads, no history between restarts. Scans touch only private LAN addresses with bare TCP connects; hostnames come from DNS PTR and the devices' own mDNS announcements. If you configure a UniFi controller, the only added traffic is read-only HTTPS queries to that controller, and your API key is sent to its private address only."
       color: P.secondary
       font.family: P.sans
       font.pixelSize: 12
@@ -122,7 +162,7 @@ Item {
 
     Text {
       textFormat: Text.PlainText
-      text: "Port Doctor 0.1.0 · kb2uka.port-doctor"
+      text: "Port Doctor 0.2.0 · kb2uka.port-doctor"
       color: P.muted
       font.family: P.sans
       font.pixelSize: 10

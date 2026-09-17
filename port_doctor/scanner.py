@@ -12,7 +12,7 @@ import datetime
 import json
 import sys
 
-from . import machine, net, scan, services
+from . import identity, machine, net, scan, services
 
 
 def _now():
@@ -22,16 +22,31 @@ def _now():
 def lan_payload(quick=False):
     payload = {"version": 1, "mode": "lan", "scannedAt": _now(), "error": None}
     try:
+        payload["identity"] = identity.computer_identity()
         ports = services.DISCOVERY_PORTS if quick else None
         payload.update(scan.scan_lan(port_list=ports))
+        # The resolver rarely names this machine's own address; the
+        # identity block always can.
+        self_ip = payload.get("network", {}).get("selfIp", "")
+        hostname = payload["identity"]["hostname"]
+        if self_ip and hostname:
+            for host in payload.get("hosts", []):
+                if host.get("ip") == self_ip and not host.get("hostname"):
+                    host["hostname"] = hostname
     except Exception as error:  # the panel must never see a stack trace
         payload["error"] = str(error)[:200]
+        payload.setdefault("identity", {"hostname": "", "model": "",
+                                        "manufacturer": "",
+                                        "label": "This machine"})
         payload["network"] = {"cidr": "", "ifname": "", "selfIp": "",
                               "gateway": "", "truncated": False,
                               "passiveOnly": True, "note": "scan failed"}
+        payload["controller"] = {"configured": False, "host": "", "site": "",
+                                 "clients": 0, "error": None}
         payload["hosts"] = []
         payload["stats"] = {"targets": 0, "hostsUp": 0, "openPorts": 0,
-                            "scanMs": 0, "discoveryMs": 0, "deadlineHit": False}
+                            "scanMs": 0, "discoveryMs": 0, "controllerMs": 0,
+                            "deadlineHit": False}
     payload["profile"] = "quick" if quick else "standard"
     return payload
 
@@ -40,6 +55,7 @@ def machine_payload():
     payload = {"version": 1, "mode": "machine", "scannedAt": _now(),
                "error": None}
     try:
+        payload["identity"] = identity.computer_identity()
         # Classify peers against every scannable subnet this machine sits on;
         # pure address math, no probe traffic.
         cidrs = []
@@ -52,6 +68,9 @@ def machine_payload():
         payload.update(machine.machine_snapshot(lan_cidrs=tuple(cidrs)))
     except Exception as error:
         payload["error"] = str(error)[:200]
+        payload.setdefault("identity", {"hostname": "", "model": "",
+                                        "manufacturer": "",
+                                        "label": "This machine"})
         payload["hostname"] = ""
         payload["listeners"] = []
         payload["connections"] = []

@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "kb2uka.port-doctor",
   "name": "Port Doctor",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "author": "KB2UKA",
   "license": "MIT",
   "description": "See everything on your home network: every host, its open ports and services, and every live connection this machine is making.",

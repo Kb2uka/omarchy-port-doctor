@@ -2,11 +2,13 @@ import QtQuick
 import QtQuick.Controls
 import "Palette.js" as P
 
-// This Mac: listening sockets and live connections of the machine itself.
+// This machine: listening sockets and live connections of the machine
+// itself, titled by its real hostname and hardware model.
 Item {
   id: root
   property string fontMono: "monospace"
   property string hostname: ""
+  property var identity: ({})
   property var listeners: []
   property var connections: []
   property string scannedAt: ""
@@ -53,11 +55,31 @@ Item {
       spacing: 10
       Text {
         textFormat: Text.PlainText
-        text: root.hostname !== "" ? root.hostname : "This Mac"
+        text: {
+          var label = root.hostname !== "" ? root.hostname
+            : String(root.identity.label || "")
+          return label !== "" ? label : "This machine"
+        }
         color: P.text
         font.family: P.sans
         font.pixelSize: 15
         font.weight: Font.DemiBold
+      }
+      Text {
+        textFormat: Text.PlainText
+        visible: text !== ""
+        text: {
+          var parts = []
+          if (String(root.identity.manufacturer || "") !== "")
+            parts.push(String(root.identity.manufacturer))
+          if (String(root.identity.model || "") !== "")
+            parts.push(String(root.identity.model))
+          return parts.join(" · ")
+        }
+        color: P.muted
+        font.family: P.sans
+        font.pixelSize: 11
+        anchors.verticalCenter: parent.verticalCenter
       }
       Text {
         textFormat: Text.PlainText

@@ -15,9 +15,10 @@ Click the bar icon and Port Doctor opens a proper application window:
 - **Open Ports** — every listening port found, sorted and class-colored.
 - **Services** — the network aggregated by service: which hosts run ssh,
   dns, http, smb, and so on.
-- **This Mac** — your machine's own listening sockets (with bind scope:
-  LAN-reachable or loopback-only) and every live connection with process
-  names and resolved peers.
+- **This Machine** — titled by your machine's real hostname (with its
+  hardware model and vendor from DMI): its own listening sockets (with
+  bind scope: LAN-reachable or loopback-only) and every live connection
+  with process names and resolved peers.
 - **Vulnerabilities** — honest exposure observations from the connect scan
   (plaintext telnet, LAN-reachable databases, web admin panels), each with
   its evidence. Not a CVE audit.
@@ -39,14 +40,40 @@ the window. Right-click the icon to rescan immediately.
 ## How it works
 
 A small read-only scanner (Python standard library only) derives the scan
-range from your own network interfaces — never from user input — and only
-ever touches private (RFC 1918) and link-local addresses. Hosts are found
-with ordinary TCP connect attempts against a fixed list of common service
-ports; a completed or refused connection marks a host alive, and no
+range from your own network interfaces — never from free-text input — and
+only ever touches private (RFC 1918) and link-local addresses. Hosts are
+found with ordinary TCP connect attempts against a fixed list of common
+service ports; a completed or refused connection marks a host alive, and no
 application data is ever sent or received. Names resolve via reverse DNS
 and bounded mDNS queries on the local link. If the machine has no private
 IPv4 interface, no probe traffic is sent at all and only the kernel's
 neighbor table is shown.
+
+This machine names itself: the sidebar, map, and device table show its
+real kernel hostname, and the machine page adds its hardware model and
+vendor read from DMI — no generic placeholder.
+
+## Whole-network view (optional UniFi)
+
+A connect scan can only reach its own subnet. If your network is run by a
+UniFi controller (UDM, Dream Machine, Cloud Key…), Port Doctor can show
+**every network it manages**, not just this VLAN: create
+`~/.config/port-doctor/unifi.env` with two lines —
+
+```
+UNIFI_HOST=10.0.0.1        # the controller's private IP
+UNIFI_API_KEY=...          # a read-only local API key
+```
+
+and optionally `UNIFI_SITE=default` and `UNIFI_VERIFY_TLS=true`. Each scan
+then merges the controller's client census: devices on other networks
+appear with their network name, grouped on an outer orbit of the map with
+dashed routed links, filterable per network in the device table, and their
+open ports are probed exactly like local ones (same private-address
+allowlist, same deadline). Hosts the controller knows that your probes
+cannot reach (guest isolation, firewall zones) still appear, honestly
+marked "reported by controller". Remove the file and Port Doctor is back
+to its own subnet; nothing is ever written or persisted by the plugin.
 
 The machine view parses `/proc/net/{tcp,tcp6,udp,udp6}` and attributes
 sockets to processes owned by your account; sockets owned by other accounts

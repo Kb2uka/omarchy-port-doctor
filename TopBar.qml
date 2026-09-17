@@ -10,6 +10,7 @@ Column {
   property int hostsOnline: 0
   property int hostsTotal: 0
   property int openPorts: 0
+  property int networkCount: 1
   property string scannedAt: ""
   property bool scanning: false
   property string page: "topology"
@@ -56,8 +57,9 @@ Column {
       }
       Text {
         textFormat: Text.PlainText
-        text: root.hostsOnline + " hosts · " + root.openPorts + " open ports · "
-          + (root.scanning ? "scanning…" : P.ageText(root.scannedAt))
+        text: root.hostsOnline + " hosts · " + root.openPorts + " open ports"
+          + (root.networkCount > 1 ? " · " + root.networkCount + " networks" : "")
+          + " · " + (root.scanning ? "scanning…" : P.ageText(root.scannedAt))
         color: P.secondary
         font.family: P.sans
         font.pixelSize: 11

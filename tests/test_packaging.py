@@ -97,8 +97,9 @@ class SourceHygieneTests(unittest.TestCase):
 
     def test_no_extra_dependencies(self):
         allowed_stdlib = {"concurrent", "datetime", "errno", "ipaddress",
-                          "json", "os", "pathlib", "select", "socket",
-                          "struct", "subprocess", "sys", "threading", "time"}
+                          "json", "os", "pathlib", "re", "select", "socket",
+                          "ssl", "struct", "subprocess", "sys", "threading",
+                          "time", "urllib"}
         for path in self.python_sources():
             for match in re.finditer(r"^\s*(?:import|from)\s+([A-Za-z_][\w]*)",
                                      path.read_text(), re.MULTILINE):
