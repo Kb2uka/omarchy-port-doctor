@@ -207,7 +207,7 @@ _COMMON_OUIS = {
     "00e04c": "Realtek", "001a2b": "Aastra", "001132": "Synology",
     "28c2dd": "Valve", "e0b9a5": "AzureWave", "0050f2": "Microsoft",
     "245ebe": "QNAP", "008077": "Brother", "000048": "Epson",
-    "000085": "Canon",
+    "000085": "Canon", "7c7ef9": "Eero",
 }
 
 
@@ -343,6 +343,8 @@ def scan_lan(interfaces=None, gateways=None, connector=connect_ms,
             "ip": ip,
             "hostname": resolved.get(ip, ""),
             "mac": info.get("mac", ""),
+            "macPrivate": bool(info.get("mac"))
+              and (int(info["mac"][:2], 16) & 0x02) != 0,
             "vendor": vendor_of(info.get("mac", "")),
             "isSelf": ip == network["selfIp"],
             "isGateway": bool(network["gateway"]) and ip == network["gateway"],
