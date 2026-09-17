@@ -345,15 +345,21 @@ def scan_lan(interfaces=None, gateways=None, connector=connect_ms,
                 except Exception as error:
                     cell["error"] = str(error)[:200]
 
-            worker = threading.Thread(target=fetch, daemon=True)
-            worker.start()
-            worker.join(budget)
+            try:
+                worker = threading.Thread(target=fetch, daemon=True)
+                worker.start()
+                worker.join(budget)
+            except Exception as error:
+                # Even thread creation failing must not take the scan down.
+                cell = {"error": str(error)[:200]}
             if isinstance(cell.get("census"), dict):
                 census = cell["census"]
             elif cell.get("error"):
                 census = {"configured": True, "host": "", "site": "",
                           "error": cell["error"], "clients": [],
                           "networks": []}
+            elif "census" in cell:
+                pass  # non-dict return: the default (unconfigured) stands
             else:
                 # The default census cannot hang without a config file, so
                 # a timeout means a controller was configured but read

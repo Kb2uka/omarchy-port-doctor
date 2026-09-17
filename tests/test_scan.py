@@ -384,3 +384,25 @@ class ControllerMergeTests(unittest.TestCase):
         self.assertIn("10.70.0.42", hosts)
         self.assertEqual(hosts["10.70.0.42"]["vendor"], "")
         self.assertFalse(hosts["10.70.0.42"]["macPrivate"])
+
+    def test_falsy_controller_return_means_not_configured(self):
+        payload = fake_scan(controller=lambda timeout: None)
+        self.assertFalse(payload["controller"]["configured"])
+        self.assertIsNone(payload["controller"]["error"])
+
+    def test_thread_creation_failure_does_not_break_the_scan(self):
+        class ExplodingThread:
+            def __init__(self, *args, **kwargs):
+                raise RuntimeError("can't start new thread")
+
+        class FakeThreading:
+            Thread = ExplodingThread
+
+        original = scan.threading
+        scan.threading = FakeThreading
+        try:
+            payload = fake_scan(controller=census_controller)
+        finally:
+            scan.threading = original
+        self.assertIn("thread", payload["controller"]["error"])
+        self.assertIn("10.70.120.99", by_ip(payload))
