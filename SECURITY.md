@@ -19,15 +19,26 @@ shell does not sandbox plugins, so install only source you trust.
   `UNIFI_HOST` and `UNIFI_API_KEY`, Port Doctor makes read-only HTTPS
   queries (`stat/sta`, `rest/networkconf`) to that UniFi controller and
   merges its client census. The host must be a private IPv4 literal —
-  hostnames and public addresses are rejected, so the API key can only be
-  sent to RFC 1918/CGNAT space. Controller-reported hosts outside the
+  hostnames and public addresses are rejected. Redirects are refused and
+  environment proxies are disabled, so requests stay on the configured
+  controller connection. Controller-reported hosts outside the
   local subnet are capped (128) and probed with the same bare connects,
   the same allowlist re-check, and the same absolute deadline; clients
   beyond that cap are simply not shown. Responses are size-capped and the
-  key is never logged or rendered. Stock controllers self-sign their
-  certificate, so TLS verification is off unless `UNIFI_VERIFY_TLS=true`;
-  the private-literal rule is what keeps the key on the LAN. In passive
-  mode the controller is never contacted.
+  key is never logged or rendered, including in error messages. TLS
+  certificate verification is enabled by default. For a self-signed
+  controller, configure a certificate with an IP-address Subject Alternative
+  Name matching `UNIFI_HOST`, and trust its certificate or issuing CA through
+  the system trust store before connecting. Importing a DNS-name-only
+  certificate is insufficient: it must be replaced with one containing that
+  IP address. Existing configurations that omitted `UNIFI_VERIFY_TLS` now
+  require these certificate checks to succeed. An explicit
+  `UNIFI_VERIFY_TLS=false` retains compatibility
+  with an untrusted self-signed certificate, but permits an attacker on the
+  network to impersonate the controller and obtain the API key; a private
+  address alone does not authenticate a peer. Use a read-only API key and
+  restrict the config file to your account (`chmod 600`). In passive mode
+  the controller is never contacted.
 - Probing is a bare TCP connect: no application bytes are sent or received,
   no banners are read, no raw sockets are used. The only UDP the plugin
   crafts itself is one small mDNS PTR question per nameless host to the
