@@ -6,8 +6,6 @@ Item {
   id: root
   property string fontMono: "monospace"
   property var hosts: []
-  property int offlineCount: 0
-  property int portsHostCount: 0
   signal hostSelected(string ip)
 
   DeviceTable {
@@ -15,8 +13,6 @@ Item {
     anchors.margins: 18
     fontMono: root.fontMono
     hosts: root.hosts
-    offlineCount: root.offlineCount
-    portsHostCount: root.portsHostCount
     title: "Devices on Your Network"
     compact: false
     onHostSelected: function(ip) { root.hostSelected(ip) }

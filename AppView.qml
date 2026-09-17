@@ -57,6 +57,9 @@ Rectangle {
       var h = hosts[i]
       var hay = (String(h.ip) + " " + String(h.hostname || "") + " "
                  + String(h.vendor || "") + " " + String(h.type || "")).toLowerCase()
+      var ports = h.ports || []
+      for (var j = 0; j < ports.length; j++)
+        hay += " " + ports[j].port + " " + String(ports[j].service || "").toLowerCase()
       if (hay.indexOf(q) >= 0) out.push(h)
     }
     return out
@@ -68,13 +71,13 @@ Rectangle {
     return out
   }
 
-  readonly property int offlineCount: hosts.length - onlineHosts.length
-  readonly property int portsHostCount: {
-    var n = 0
-    for (var i = 0; i < onlineHosts.length; i++)
-      if ((onlineHosts[i].ports || []).length > 0) n++
-    return n
+  readonly property var onlineVisibleHosts: {
+    var out = []
+    for (var i = 0; i < visibleHosts.length; i++)
+      if (visibleHosts[i].online) out.push(visibleHosts[i])
+    return out
   }
+
   readonly property int totalOpenPorts: {
     var n = 0
     for (var i = 0; i < onlineHosts.length; i++) n += (onlineHosts[i].ports || []).length
@@ -123,7 +126,7 @@ Rectangle {
         topoMode: root.topoMode
         searchText: root.searchText
         onSearchEdited: function(text) { root.searchText = text }
-        onTopoModeChanged: function(mode) { root.topoMode = mode }
+        onTopoModeSelected: function(mode) { root.topoMode = mode }
         onNavigate: function(page) { root.page = page }
         onRescanRequested: root.rescanRequested()
       }
@@ -170,8 +173,6 @@ Rectangle {
           newIps: root.newIps
           mode: root.topoMode
           selectedIp: root.selectedIp
-          offlineCount: root.offlineCount
-          portsHostCount: root.portsHostCount
           onHostSelected: function(ip) { root.selectedIp = ip }
         }
 
@@ -180,8 +181,6 @@ Rectangle {
           visible: root.page === "devices"
           fontMono: root.fontMono
           hosts: root.visibleHosts
-          offlineCount: root.offlineCount
-          portsHostCount: root.portsHostCount
           onHostSelected: function(ip) { root.selectedIp = ip }
         }
 
@@ -189,14 +188,14 @@ Rectangle {
           anchors.fill: parent
           visible: root.page === "ports"
           fontMono: root.fontMono
-          hosts: root.onlineHosts
+          hosts: root.onlineVisibleHosts
         }
 
         ServicesView {
           anchors.fill: parent
           visible: root.page === "services"
           fontMono: root.fontMono
-          hosts: root.onlineHosts
+          hosts: root.onlineVisibleHosts
         }
 
         MachineView {

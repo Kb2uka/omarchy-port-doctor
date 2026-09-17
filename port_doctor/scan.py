@@ -10,6 +10,7 @@ an absolute deadline bound the whole run.
 import concurrent.futures as futures
 import errno
 import socket
+import threading
 import time
 
 from . import classify, names, net, services
@@ -81,34 +82,37 @@ def _probe_many(pairs, timeout, deadline, connector):
 
 
 def _names_for(ips, deadline):
-    """PTR lookups that can be cut short; stragglers are simply abandoned.
+    """PTR lookups on daemon threads; stragglers are simply abandoned.
 
-    The system resolver has no socket timeout, so these run on their own
-    pool and anything not back by the deadline is dropped from the result.
+    The system resolver has no socket timeout, so lookups run on daemon
+    threads (never a ThreadPoolExecutor: its interpreter-exit hook would
+    join hung workers and hold the process past its own deadline).
     """
-    names = {}
+    out = {}
+    lock = threading.Lock()
+
+    def lookup(ip):
+        try:
+            name = socket.gethostbyaddr(ip)[0].rstrip(".")
+        except Exception:
+            return
+        if len(name) <= _MAX_NAME:
+            with lock:
+                out[ip] = name
+
     remaining = deadline - time.monotonic()
     if remaining <= 0.25 or not ips:
-        return names
-    pool = futures.ThreadPoolExecutor(max_workers=NAME_THREADS)
-    try:
-        pending = {}
-        for ip in ips[:MAX_NAMES]:
-            pending[pool.submit(socket.gethostbyaddr, ip)] = ip
-        for future, ip in pending.items():
-            left = deadline - time.monotonic()
-            if left <= 0:
-                break
-            try:
-                name = future.result(timeout=min(2.0, left))[0]
-            except Exception:
-                continue
-            name = name.rstrip(".")
-            if len(name) <= _MAX_NAME:
-                names[ip] = name
-    finally:
-        pool.shutdown(wait=False, cancel_futures=True)
-    return names
+        return out
+    threads = [threading.Thread(target=lookup, args=(ip,), daemon=True)
+               for ip in ips[:MAX_NAMES]]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        left = deadline - time.monotonic()
+        if left <= 0:
+            break
+        thread.join(timeout=min(2.0, left))
+    return out
 
 
 def resolve_names(ips, deadline):
@@ -252,7 +256,10 @@ def scan_lan(interfaces=None, gateways=None, connector=connect_ms,
         for addr in iface["addrs"]:
             if not net.scannable(addr["local"]):
                 continue
-            rank = (iface["ifname"] != primary_dev, -addr["prefixlen"])
+            # Point-to-point links (/31, /32 VPNs) are never a useful LAN
+            # scan even when they carry the default route; sink them last.
+            rank = (addr["prefixlen"] >= 31, iface["ifname"] != primary_dev,
+                    addr["prefixlen"])
             if chosen is None or rank < chosen[0]:
                 chosen = (rank, iface, addr)
 
@@ -279,10 +286,12 @@ def scan_lan(interfaces=None, gateways=None, connector=connect_ms,
         network = {"cidr": cidr, "ifname": iface["ifname"],
                    "selfIp": addr["local"],
                    "gateway": gateway_by_dev.get(iface["ifname"], ""),
-                   "truncated": truncated, "passiveOnly": False}
+                   "truncated": truncated, "passiveOnly": False,
+                   "note": ""}
 
         host_set = set(targets)
-        alive = _alive_from_neigh(neigh, host_set)
+        neigh_seeded = _alive_from_neigh(neigh, host_set)
+        alive = set(neigh_seeded)
         if network["gateway"] and net.scannable(network["gateway"]):
             alive.add(network["gateway"])
         alive.add(addr["local"])
@@ -315,10 +324,17 @@ def scan_lan(interfaces=None, gateways=None, connector=connect_ms,
             for state, ms in states.values():
                 if latency is None or ms < latency:
                     latency = ms
-            # via reflects evidence: "scan" only when a probe was answered;
-            # a neighbor-table seed that stayed silent is "neigh".
-            hosts[ip] = {"ip": ip, "alive": True,
-                         "via": "scan" if states else "neigh",
+            # via is evidence, honestly: probes answered, or the neighbor
+            # table knew the host, or it is one of the fixed local anchors.
+            if states:
+                via = "scan"
+            elif ip in neigh_seeded:
+                via = "neigh"
+            elif ip == addr["local"]:
+                via = "self"
+            else:
+                via = "route"
+            hosts[ip] = {"ip": ip, "alive": True, "via": via,
                          "latencyMs": None if latency is None else round(latency, 1),
                          "ports": [{"port": port}
                                    for port, (state, ms) in sorted(states.items())
@@ -328,7 +344,9 @@ def scan_lan(interfaces=None, gateways=None, connector=connect_ms,
     # Merge with the pre-scan read so a flaky post-scan read costs nothing.
     neigh_after = net.neighbors()
     neigh = {**neigh, **neigh_after}
-    resolved = resolver(sorted(hosts), deadline)
+    # Name resolution only happens on the active path; passive mode sends
+    # nothing at all, including resolver and mDNS queries.
+    resolved = {} if network["passiveOnly"] else resolver(sorted(hosts), deadline)
 
     out_hosts = []
     for ip in sorted(hosts, key=lambda text: tuple(int(p) for p in text.split("."))):

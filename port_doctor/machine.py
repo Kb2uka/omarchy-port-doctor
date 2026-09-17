@@ -9,7 +9,7 @@ rather than failing or needing privilege.
 import ipaddress
 import os
 import socket
-import concurrent.futures as futures
+import threading
 import time
 
 from . import services
@@ -190,28 +190,35 @@ def _remote_kind(ip, lan_prefixes):
 
 
 def _resolve_names(ips, deadline_s=NAME_DEADLINE):
-    """PTR lookups for remote peers, bounded and droppable like scan.py's."""
+    """PTR lookups for remote peers on daemon threads.
+
+    Daemon threads, never a pool: the futures interpreter-exit hook joins
+    workers, and a hung resolver would hold this process past its deadline.
+    """
     names = {}
     if not ips:
         return names
-    deadline = time.monotonic() + deadline_s
-    pool = futures.ThreadPoolExecutor(max_workers=8)
-    try:
-        pending = {pool.submit(socket.gethostbyaddr, ip): ip
-                   for ip in ips[:MAX_NAMES]}
-        for future, ip in pending.items():
-            left = deadline - time.monotonic()
-            if left <= 0:
-                break
-            try:
-                name = future.result(timeout=min(1.0, left))[0]
-            except Exception:
-                continue
-            name = name.rstrip(".")
-            if len(name) <= 63:
+    lock = threading.Lock()
+
+    def lookup(ip):
+        try:
+            name = socket.gethostbyaddr(ip)[0].rstrip(".")
+        except Exception:
+            return
+        if len(name) <= 63:
+            with lock:
                 names[ip] = name
-    finally:
-        pool.shutdown(wait=False, cancel_futures=True)
+
+    threads = [threading.Thread(target=lookup, args=(ip,), daemon=True)
+               for ip in ips[:MAX_NAMES]]
+    for thread in threads:
+        thread.start()
+    end = time.monotonic() + deadline_s
+    for thread in threads:
+        left = end - time.monotonic()
+        if left <= 0:
+            break
+        thread.join(timeout=min(1.0, left))
     return names
 
 

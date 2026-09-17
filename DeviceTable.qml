@@ -8,8 +8,6 @@ Item {
   id: root
   property string fontMono: "monospace"
   property var hosts: []
-  property int offlineCount: 0
-  property int portsHostCount: 0
   property string title: "Devices on Your Network"
   property bool compact: false
   property string selectedIp: ""
@@ -17,6 +15,18 @@ Item {
   signal hostSelected(string ip)
 
   property string filter: "all"
+
+  readonly property int onlineCount: {
+    var n = 0
+    for (var i = 0; i < hosts.length; i++) if (hosts[i].online) n++
+    return n
+  }
+  readonly property int portsOnlyCount: {
+    var n = 0
+    for (var i = 0; i < hosts.length; i++)
+      if (hosts[i].online && (hosts[i].ports || []).length > 0) n++
+    return n
+  }
 
   readonly property var filteredHosts: {
     var out = []
@@ -82,9 +92,9 @@ Item {
       Repeater {
         model: [
           { id: "all", label: "All", count: root.hosts.length },
-          { id: "online", label: "Online", count: root.hosts.length - root.offlineCount },
-          { id: "offline", label: "Offline", count: root.offlineCount },
-          { id: "ports", label: "With Open Ports", count: root.portsHostCount }
+          { id: "online", label: "Online", count: root.onlineCount },
+          { id: "offline", label: "Offline", count: root.hosts.length - root.onlineCount },
+          { id: "ports", label: "With Open Ports", count: root.portsOnlyCount }
         ]
 
         Rectangle {
@@ -355,7 +365,9 @@ Item {
                   if (h.latencyMs !== null && h.latencyMs !== undefined)
                     parts.push(String(h.latencyMs) + " ms")
                   parts.push(h.via === "neigh" ? "seen in neighbor table"
-                                               : "answered probes")
+                    : h.via === "self" ? "this machine"
+                    : h.via === "route" ? "the default gateway"
+                    : "answered probes")
                   return parts.join("  ·  ")
                 }
                 color: P.secondary

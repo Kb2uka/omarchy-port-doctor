@@ -152,20 +152,32 @@ Panel {
       lastSeen[ip] = lanScannedAt
       hostCache[ip] = h
     }
-    // Offline: known before, silent now. Rows keep their last identity.
+    // Offline: known before, silent now. Rows keep their last identity,
+    // including the self/gateway roles and how the host was discovered.
+    // Entries absent for two hours are forgotten, so DHCP churn on a
+    // long-lived shell cannot grow the baseline without bound.
     var merged = []
     for (var j = 0; j < incoming.length; j++) merged.push(incoming[j])
+    var expiryMs = 2 * 3600 * 1000
+    var nowMs = Date.now()
     for (var knownIp in lastSeen) {
       if (seen[knownIp]) continue
+      var seenMs = new Date(lastSeen[knownIp]).getTime()
+      if (isNaN(seenMs) || nowMs - seenMs > expiryMs) {
+        delete lastSeen[knownIp]
+        delete hostCache[knownIp]
+        continue
+      }
       var prior = hostCache[knownIp] || {}
       merged.push({
         ip: knownIp,
         hostname: String(prior.hostname || ""),
         mac: String(prior.mac || ""),
+        macPrivate: !!prior.macPrivate,
         vendor: String(prior.vendor || ""),
         type: String(prior.type || "unknown"),
-        isSelf: false, isGateway: false,
-        via: "scan", latencyMs: null, ports: [],
+        isSelf: !!prior.isSelf, isGateway: !!prior.isGateway,
+        via: String(prior.via || "scan"), latencyMs: null, ports: [],
         online: false, lastSeen: lastSeen[knownIp]
       })
     }

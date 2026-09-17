@@ -16,8 +16,6 @@ Item {
   property var newIps: ({})
   property string mode: "map"
   property string selectedIp: ""
-  property int offlineCount: 0
-  property int portsHostCount: 0
   signal hostSelected(string ip)
 
   readonly property var mapHosts: {
@@ -72,6 +70,7 @@ Item {
 
   onModeChanged: if (mode === "map") layout()
   onHostsChanged: layout()
+  onSelectedIpChanged: linksCanvas.requestPaint()
 
   // ---------------------------------------------------------- views
   Item {
@@ -247,8 +246,6 @@ Item {
         anchors.margins: 14
         fontMono: root.fontMono
         hosts: root.hosts
-        offlineCount: root.offlineCount
-        portsHostCount: root.portsHostCount
         title: "Devices on Your Network"
         compact: true
         selectedIp: root.selectedIp
@@ -352,8 +349,6 @@ Item {
     anchors.margins: 16
     fontMono: root.fontMono
     hosts: root.hosts
-    offlineCount: root.offlineCount
-    portsHostCount: root.portsHostCount
     title: ""
     compact: false
     selectedIp: root.selectedIp

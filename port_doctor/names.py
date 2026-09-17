@@ -105,14 +105,18 @@ def _reverse_name(ip):
 
 
 def mdns_reverse_names(ips, deadline, sender=None):
-    """{ip: hostname} for up to 64 addresses, never past the deadline.
+    """{ip: hostname} for up to 64 addresses, inside one short window.
 
-    sender injectable for tests: sender(sock, packet) per query.
+    The window is capped at _WINDOW regardless of the caller's deadline:
+    on a quiet LAN mDNS answers arrive in tens of milliseconds, and sitting
+    on the socket for seconds buys nothing. sender injectable for tests:
+    sender(sock, packet) per query.
     """
     out = {}
     ips = list(ips)[:64]
     if not ips:
         return out
+    deadline = min(deadline, time.monotonic() + _WINDOW)
     wanted = {_reverse_name(ip): ip for ip in ips}
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
     try:

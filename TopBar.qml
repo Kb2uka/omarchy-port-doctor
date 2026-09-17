@@ -225,6 +225,7 @@ Column {
         ]
 
         Rectangle {
+          id: modeChip
           required property var modelData
           required property int index
           readonly property bool selected: root.topoMode === modelData.mode
@@ -242,7 +243,7 @@ Column {
             Text {
               textFormat: Text.PlainText
               text: modelData.glyph
-              color: parent.selected ? P.accent : P.secondary
+              color: modeChip.selected ? P.accent : P.secondary
               font.family: root.fontMono
               font.pixelSize: 12
             }
@@ -250,7 +251,7 @@ Column {
               id: modeLabel
               textFormat: Text.PlainText
               text: modelData.label
-              color: parent.selected ? P.accent : P.secondary
+              color: modeChip.selected ? P.accent : P.secondary
               font.family: P.sans
               font.pixelSize: 11
             }

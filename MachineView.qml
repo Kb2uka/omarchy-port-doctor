@@ -32,7 +32,8 @@ Item {
       total++
     }
     var order = [["lan", P.teal], ["private", P.blue],
-                 ["internet", P.secondary], ["loopback", P.muted]]
+                 ["internet", P.secondary], ["loopback", P.muted],
+                 ["unknown", P.muted]]
     var out = []
     for (var j = 0; j < order.length; j++)
       if (counts[order[j][0]])
@@ -48,6 +49,7 @@ Item {
     spacing: 14
 
     Row {
+      id: headerRow
       spacing: 10
       Text {
         textFormat: Text.PlainText
@@ -93,6 +95,7 @@ Item {
 
     // Stat tiles
     Row {
+      id: tilesRow
       width: parent.width
       spacing: 10
 
@@ -140,6 +143,7 @@ Item {
 
     // Traffic mix bar
     Column {
+      id: mixBlock
       visible: root.kindBreakdown.length > 0
       width: parent.width
       spacing: 6
@@ -191,10 +195,12 @@ Item {
       }
     }
 
-    // Two tables side by side on wide windows, stacked on narrow.
+    // Two tables side by side, filling what the header, tiles, and mix
+    // bar leave (the mix bar is conditional, so it is measured).
     Row {
       width: parent.width
-      height: parent.height - 64 - 26 - 14 * 3
+      height: parent.height - headerRow.implicitHeight - tilesRow.implicitHeight
+        - (mixBlock.visible ? mixBlock.implicitHeight : 0) - 3 * 14
       spacing: 14
 
       // Listeners
