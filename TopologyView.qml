@@ -79,7 +79,9 @@ Item {
     var w = mapArea.width, h = mapArea.height
     if (w < 100 || h < 100) return
     var self = null, gateway = null
-    var groups = [], byName = {}
+    // Null-prototype map: a controller network named "toString" or
+    // "constructor" must not resolve to an inherited member.
+    var groups = [], byName = Object.create(null)
     var list = mapHosts
     for (var i = 0; i < list.length; i++) {
       var hst = list[i]
@@ -88,11 +90,13 @@ Item {
       var nm = clusterName(hst)
       var g = byName[nm]
       if (!g) {
-        g = { name: nm, routed: false, hosts: [] }
+        g = { name: nm, routed: hst.remoteNet === true, hosts: [] }
         byName[nm] = g
         groups.push(g)
       }
-      if (hst.remoteNet === true) g.routed = true
+      // A panel reads as routed only when every member is reached through
+      // the gateway; a mixed group keeps the local treatment.
+      g.routed = g.routed && hst.remoteNet === true
       g.hosts.push(hst)
     }
     // Local network first, then biggest first, so positions survive
@@ -124,18 +128,53 @@ Item {
     }
 
     var k = groups.length
-    var ring = Math.max(300, maxHalf + 170)
     var wide = w >= h * 1.25
-    var rx = ring * (wide ? 1.45 : 1.0)
-    var ry = ring * (wide ? 0.72 : 1.0)
-    for (i = 0; i < k; i++) {
-      var angle
-      if (k === 1) angle = wide ? 0 : -Math.PI / 2
-      else if (k === 2) angle = i === 0 ? 0 : Math.PI
-      else if (k % 2 === 1) angle = -Math.PI / 2 + i * 2 * Math.PI / k
-      else angle = -Math.PI / 2 + (i + 0.5) * 2 * Math.PI / k
-      groups[i].vx = Math.cos(angle) * rx
-      groups[i].vy = Math.sin(angle) * ry
+    function placeGroups(ring) {
+      var rx = ring * (wide ? 1.45 : 1.0)
+      var ry = ring * (wide ? 0.72 : 1.0)
+      for (var i = 0; i < k; i++) {
+        var angle
+        if (k === 1) angle = wide ? 0 : -Math.PI / 2
+        else if (k === 2) angle = i === 0 ? 0 : Math.PI
+        else if (k % 2 === 1) angle = -Math.PI / 2 + i * 2 * Math.PI / k
+        else angle = -Math.PI / 2 + (i + 0.5) * 2 * Math.PI / k
+        groups[i].vx = Math.cos(angle) * rx
+        groups[i].vy = Math.sin(angle) * ry
+      }
+    }
+    function overlapsSelf() {
+      for (var i = 0; i < k; i++) {
+        var g = groups[i]
+        if (Math.abs(g.vx) < g.w / 2 + 70 && Math.abs(g.vy - 140) < g.h / 2 + 58)
+          return true
+      }
+      return false
+    }
+    var ring = Math.max(300, maxHalf + 170)
+    if (k > 1) {
+      // Adjacent anchors must also clear the panels themselves. The
+      // worst-case chord between two anchors on the ellipse is bounded by
+      // 2 * min(rx, ry) * sin(pi / k), so size the ring from that floor.
+      var minFactor = wide ? 0.72 : 1.0
+      var need = 0
+      for (i = 0; i < k; i++) {
+        var gA = groups[i], gB = groups[(i + 1) % k]
+        var extA = Math.sqrt(gA.w * gA.w + gA.h * gA.h) / 2
+        var extB = Math.sqrt(gB.w * gB.w + gB.h * gB.h) / 2
+        need = Math.max(need, extA + extB + 40)
+      }
+      ring = Math.max(ring, need / (2 * minFactor * Math.sin(Math.PI / k)))
+    }
+    placeGroups(ring)
+    // Straight down is reserved for this machine; nudge the ring out until
+    // no panel touches its box.
+    if (self && gateway) {
+      var bump = 0
+      while (bump < 6 && overlapsSelf()) {
+        ring *= 1.12
+        placeGroups(ring)
+        bump++
+      }
     }
 
     var hub = gateway || self
@@ -189,12 +228,36 @@ Item {
     selfLink = (self && hub !== self) ? { x: selfVx + offX, y: selfVy + offY } : null
     worldW = Math.max(10, Math.round(maxX - minX + 24))
     worldH = Math.max(10, Math.round(maxY - minY + 24))
-    worldScale = Math.min(1, (w - 16) / worldW, (h - 16) / worldH)
+    wideState = wide ? 1 : 0
+    fit()
     linksCanvas.requestPaint()
   }
 
+  // A resize changes only the scale unless it flips the wide/narrow
+  // arrangement, so dragging the window edge does not rebuild the grid.
+  property int wideState: -1
+
+  function fit() {
+    var w = mapArea.width, h = mapArea.height
+    if (w < 100 || h < 100) return
+    worldScale = Math.min(1, (w - 16) / worldW, (h - 16) / worldH)
+  }
+
+  function sizeChanged() {
+    var w = mapArea.width, h = mapArea.height
+    if (w < 100 || h < 100) return
+    var ws = w >= h * 1.25 ? 1 : 0
+    if (wideState >= 0 && ws === wideState) fit()
+    else layout()
+  }
+
   onModeChanged: if (mode === "map") layout()
-  onHostsChanged: layout()
+  onHostsChanged: {
+    layout()
+    // A hovered device that went offline or got filtered out must not keep
+    // hoverIp: it would blank the inspector and mute the selection link.
+    if (root.hoverIp !== "" && hostByIp(root.hoverIp) === null) root.hoverIp = ""
+  }
   onSelectedIpChanged: linksCanvas.requestPaint()
   onHoverIpChanged: linksCanvas.requestPaint()
 
@@ -209,8 +272,8 @@ Item {
       anchors.right: parent.right
       anchors.top: parent.top
       height: Math.max(320, parent.height * 0.58)
-      onWidthChanged: root.layout()
-      onHeightChanged: root.layout()
+      onWidthChanged: root.sizeChanged()
+      onHeightChanged: root.sizeChanged()
       Component.onCompleted: root.layout()
 
       Item {
@@ -262,7 +325,9 @@ Item {
               var slen = Math.max(1, Math.sqrt(sdx * sdx + sdy * sdy))
               c.beginPath()
               c.moveTo(hub.x + sdx / slen * hub.r, hub.y + sdy / slen * hub.r)
-              c.lineTo(sl.x, sl.y - 30)
+              // Bow right so the line clears the hub's centered label.
+              c.quadraticCurveTo((hub.x + sl.x) / 2 + 36, (hub.y + sl.y) / 2,
+                                 sl.x, sl.y - 30)
               c.strokeStyle = P.alpha(P.accent, 0.45)
               c.lineWidth = 1.2
               c.stroke()
@@ -356,6 +421,8 @@ Item {
 
               Text {
                 textFormat: Text.PlainText
+                // Name-only tier (labels === 1) drops the IP line.
+                visible: modelData.labels === 2
                 anchors.horizontalCenter: parent.horizontalCenter
                 width: parent.width
                 horizontalAlignment: Text.AlignHCenter

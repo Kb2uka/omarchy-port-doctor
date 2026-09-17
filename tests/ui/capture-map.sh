@@ -10,7 +10,7 @@ mkdir -p "$art"
 out="${1:-$art/map-large.png}"
 fixture="${2:-large}"
 
-harness="$(mktemp -d /tmp/pd-capture-XXXXXX)"
+harness="$(mktemp -d "${TMPDIR:-/tmp}/pd-capture-XXXXXX")"
 weston_pid=""
 qs_pid=""
 cleanup() {
@@ -68,18 +68,19 @@ ShellRoot {
     interval: 1600
     running: true
     onTriggered: app.grabToImage(function(result) {
-      result.saveToFile("__OUT__")
+      result.saveToFile(Quickshell.env("CAPTURE_OUT"))
       Qt.quit()
     })
   }
   Timer { interval: 9000; running: true; onTriggered: Qt.quit() }
 }
 QML
-sed -i "s|__OUT__|$out|" "$harness/shell.qml"
 
 export XDG_RUNTIME_DIR="$harness/runtime"
 export XDG_STATE_HOME="$harness/state"
 export WAYLAND_DISPLAY=pd-capture
+export CAPTURE_OUT="$out"
+rm -f "$out"
 
 weston_launch=()
 if [[ -n "${WESTON_ROOT:-}" ]]; then
