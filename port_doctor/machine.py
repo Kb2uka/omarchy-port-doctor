@@ -248,8 +248,10 @@ def machine_snapshot(proc_root="/proc", resolver=None, lan_cidrs=()):
                 "bind": sock["localIp"], "scope": _scope(sock["localIp"]),
                 "process": process, "pid": pid,
             })
-        elif sock["state"] in ("close",):
-            continue  # udp/tcp state 0x07 with a remote is just noise here
+        elif sock["state"] in ("close", "time-wait"):
+            # time-wait corpses have no owner and say nothing about who is
+            # talking right now; tcp "close" is equally transient.
+            continue
         else:
             connections.append({
                 "proto": sock["proto"], "state": sock["state"],

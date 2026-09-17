@@ -12,7 +12,7 @@ import datetime
 import json
 import sys
 
-from . import machine, scan
+from . import machine, net, scan
 
 
 def _now():
@@ -38,8 +38,16 @@ def machine_payload():
     payload = {"version": 1, "mode": "machine", "scannedAt": _now(),
                "error": None}
     try:
-        lan_cidrs = ()
-        payload.update(machine.machine_snapshot(lan_cidrs=lan_cidrs))
+        # Classify peers against every scannable subnet this machine sits on;
+        # pure address math, no probe traffic.
+        cidrs = []
+        for iface in net.interfaces():
+            for addr in iface["addrs"]:
+                if net.scannable(addr["local"]):
+                    cidr, _, _ = net.network_window(addr["local"],
+                                                    addr["prefixlen"])
+                    cidrs.append(cidr)
+        payload.update(machine.machine_snapshot(lan_cidrs=tuple(cidrs)))
     except Exception as error:
         payload["error"] = str(error)[:200]
         payload["hostname"] = ""

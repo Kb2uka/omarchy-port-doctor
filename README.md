@@ -19,7 +19,8 @@ One icon in the header opens a two-view panel:
 
 ## Features
 
-- Live host discovery and a bounded TCP connect scan of 50 curated ports
+- Live host discovery and a bounded TCP connect scan of a fixed list of
+  common service ports
 - Per-host service chips, expandable port detail, latency, MAC vendor
 - This-machine view: listeners with bind scope, live connections with
   process names and reverse-resolved peers

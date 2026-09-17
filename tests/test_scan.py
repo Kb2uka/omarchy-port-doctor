@@ -135,6 +135,28 @@ class ScanTests(unittest.TestCase):
         discovery_targets = set(calls)
         self.assertIn("10.70.120.10", discovery_targets)
 
+    def test_discovery_answers_merge_and_are_not_reprobed(self):
+        calls = []
+
+        def connector(ip, port, timeout):
+            calls.append((ip, port))
+            if ip == "10.70.120.10" and port == 443:
+                return "open", 1.0
+            if ip == "10.70.120.10":
+                return "closed", 2.0
+            return "filtered", 0.0
+
+        payload = fake_scan(connector=connector)
+        hosts = by_ip(payload)
+        self.assertIn("10.70.120.10", hosts)
+        self.assertEqual([p["port"] for p in hosts["10.70.120.10"]["ports"]],
+                         [443])
+        self.assertEqual(hosts["10.70.120.10"]["latencyMs"], 1.0)
+        # Every port answered during discovery (open or refused) is settled:
+        # the full pass must not probe it again.
+        self.assertEqual(calls.count(("10.70.120.10", 443)), 1)
+        self.assertEqual(calls.count(("10.70.120.10", 22)), 1)
+
 
 if __name__ == "__main__":
     unittest.main()

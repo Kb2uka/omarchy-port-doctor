@@ -15,9 +15,9 @@ import time
 from . import net, services
 
 
-CONNECT_TIMEOUT = 0.4
+CONNECT_TIMEOUT = 0.3
 SCAN_DEADLINE = 9.0
-THREADS = 64
+THREADS = 128
 NAME_THREADS = 16
 MAX_NAMES = 64
 MAX_PORTS_PER_HOST = 64
@@ -270,9 +270,20 @@ def scan_lan(interfaces=None, gateways=None, connector=connect_ms,
         for ip in probe:
             alive.add(ip)
 
-        scanned = _probe_many(
-            [(ip, port) for ip in sorted(alive) for port in services.ALL_PORTS],
-            CONNECT_TIMEOUT, deadline, connector)
+        # Discovery answers are real data: an answered port (open or refused)
+        # is settled, so the full pass skips it instead of re-probing, and
+        # its latency feeds the host's response time.
+        scanned = {ip: dict(states) for ip, states in probe.items()}
+        remaining_pairs = []
+        for ip in sorted(alive):
+            answered = scanned.get(ip, {})
+            for port in services.ALL_PORTS:
+                if port not in answered:
+                    remaining_pairs.append((ip, port))
+        for ip, states in _probe_many(remaining_pairs, CONNECT_TIMEOUT,
+                                      deadline, connector).items():
+            scanned.setdefault(ip, {}).update(states)
+
         for ip in sorted(alive):
             states = scanned.get(ip, {})
             latency = None

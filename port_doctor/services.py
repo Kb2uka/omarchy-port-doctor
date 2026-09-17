@@ -64,7 +64,7 @@ PORTS = {
 # Small liveness probe set: answered by routers, computers, printers, and
 # most appliances, so a host rarely has to time out on every port before we
 # consider it absent. A refused connection still proves the host is alive.
-DISCOVERY_PORTS = [80, 443, 22, 445, 53, 8080, 631, 9100]
+DISCOVERY_PORTS = [443, 80, 22, 445, 53]
 
 ALL_PORTS = sorted(PORTS)
 
