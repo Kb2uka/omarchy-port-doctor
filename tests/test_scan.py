@@ -157,6 +157,38 @@ class ScanTests(unittest.TestCase):
         self.assertEqual(calls.count(("10.70.120.10", 443)), 1)
         self.assertEqual(calls.count(("10.70.120.10", 22)), 1)
 
+    def test_names_for_uses_the_real_lookup_path(self):
+        """Regression: _names_for must actually collect resolver answers
+        (an earlier inverted future/ip tuple silently dropped them all)."""
+        calls = []
+
+        def fake_gethostbyaddr(ip):
+            calls.append(ip)
+            if ip == "10.0.0.9":
+                return ("pi-hole.lan.", [], [])
+            if ip == "10.0.0.10":
+                return ("x" * 80, [], [])  # over-long names are dropped
+            raise OSError("no PTR")
+
+        original = scan.socket.gethostbyaddr
+        scan.socket.gethostbyaddr = fake_gethostbyaddr
+        try:
+            names = scan._names_for(["10.0.0.9", "10.0.0.10", "10.0.0.11"],
+                                    time.monotonic() + 2.0)
+        finally:
+            scan.socket.gethostbyaddr = original
+        self.assertEqual(sorted(calls), ["10.0.0.10", "10.0.0.11", "10.0.0.9"])
+        self.assertEqual(names, {"10.0.0.9": "pi-hole.lan"})
+
+    def test_unscannable_gateway_is_not_seeded(self):
+        def connector(ip, port, timeout):
+            return "filtered", 0.0
+
+        payload = fake_scan(gateways=[{"gateway": "8.8.8.8", "dev": "wlan0"}],
+                            connector=connector)
+        hosts = by_ip(payload)
+        self.assertNotIn("8.8.8.8", hosts)
+
 
 if __name__ == "__main__":
     unittest.main()

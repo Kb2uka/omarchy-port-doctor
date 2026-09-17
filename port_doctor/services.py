@@ -75,3 +75,19 @@ def describe(port):
     if entry is None:
         return "tcp", "unknown"
     return entry[0], entry[1]
+
+
+# Well-known UDP services for the machine view (UDP ports are never probed).
+UDP_SERVICES = {
+    53: "dns", 67: "dhcp", 68: "dhcp", 123: "ntp", 500: "isakmp",
+    1900: "ssdp", 4500: "ipsec-nat", 5353: "mdns",
+}
+
+
+def describe_socket(port, proto):
+    """(service, class) for one of this machine's own sockets."""
+    if proto.startswith("udp") and port in UDP_SERVICES:
+        return UDP_SERVICES[port], "infra"
+    if port in PORTS:
+        return PORTS[port]
+    return proto, "unknown"

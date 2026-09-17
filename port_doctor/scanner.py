@@ -12,17 +12,18 @@ import datetime
 import json
 import sys
 
-from . import machine, net, scan
+from . import machine, net, scan, services
 
 
 def _now():
     return datetime.datetime.now().astimezone().isoformat(timespec="seconds")
 
 
-def lan_payload():
+def lan_payload(quick=False):
     payload = {"version": 1, "mode": "lan", "scannedAt": _now(), "error": None}
     try:
-        payload.update(scan.scan_lan())
+        ports = services.DISCOVERY_PORTS if quick else None
+        payload.update(scan.scan_lan(port_list=ports))
     except Exception as error:  # the panel must never see a stack trace
         payload["error"] = str(error)[:200]
         payload["network"] = {"cidr": "", "ifname": "", "selfIp": "",
@@ -31,6 +32,7 @@ def lan_payload():
         payload["hosts"] = []
         payload["stats"] = {"targets": 0, "hostsUp": 0, "openPorts": 0,
                             "scanMs": 0, "discoveryMs": 0, "deadlineHit": False}
+    payload["profile"] = "quick" if quick else "standard"
     return payload
 
 
@@ -58,14 +60,17 @@ def machine_payload():
     return payload
 
 
-_USAGE = "usage: port-doctor.py {lan|machine}"
+_USAGE = "usage: port-doctor.py {lan|lan-quick|machine}"
 
 
 def main(argv=None):
     argv = list(sys.argv[1:] if argv is None else argv)
-    if len(argv) != 1 or argv[0] not in ("lan", "machine"):
+    if len(argv) != 1 or argv[0] not in ("lan", "lan-quick", "machine"):
         print(_USAGE, file=sys.stderr)
         return 2
-    payload = lan_payload() if argv[0] == "lan" else machine_payload()
+    if argv[0] == "machine":
+        payload = machine_payload()
+    else:
+        payload = lan_payload(quick=argv[0] == "lan-quick")
     print(json.dumps(payload, separators=(",", ":")))
     return 0

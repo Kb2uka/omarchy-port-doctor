@@ -12,11 +12,12 @@ import errno
 import socket
 import time
 
-from . import net, services
+from . import classify, names, net, services
 
 
 CONNECT_TIMEOUT = 0.3
-SCAN_DEADLINE = 9.0
+SCAN_DEADLINE = 11.0
+NAME_DEADLINE = 1.5
 THREADS = 128
 NAME_THREADS = 16
 MAX_NAMES = 64
@@ -94,7 +95,7 @@ def _names_for(ips, deadline):
         pending = {}
         for ip in ips[:MAX_NAMES]:
             pending[pool.submit(socket.gethostbyaddr, ip)] = ip
-        for ip, future in pending.items():
+        for future, ip in pending.items():
             left = deadline - time.monotonic()
             if left <= 0:
                 break
@@ -108,6 +109,23 @@ def _names_for(ips, deadline):
     finally:
         pool.shutdown(wait=False, cancel_futures=True)
     return names
+
+
+def resolve_names(ips, deadline):
+    """Hostnames from DNS PTR first, then multicast DNS for the gaps.
+
+    PTR answers come from the configured resolver; mDNS hears the devices'
+    own announcements on the local link. mDNS only fills addresses PTR left
+    nameless, and both stages die at the shared deadline.
+    """
+    ptr_deadline = min(deadline, time.monotonic() + NAME_DEADLINE)
+    found = _names_for(ips, ptr_deadline)
+    missing = [ip for ip in ips if ip not in found]
+    if missing and time.monotonic() < deadline - 0.3:
+        for ip, name in names.mdns_reverse_names(missing, deadline).items():
+            if len(name) <= _MAX_NAME:
+                found.setdefault(ip, name)
+    return found
 
 
 # Best-effort OUI map of vendors common on home networks. Cosmetic only:
@@ -188,6 +206,8 @@ _COMMON_OUIS = {
     # Others
     "00e04c": "Realtek", "001a2b": "Aastra", "001132": "Synology",
     "28c2dd": "Valve", "e0b9a5": "AzureWave", "0050f2": "Microsoft",
+    "245ebe": "QNAP", "008077": "Brother", "000048": "Epson",
+    "000085": "Canon",
 }
 
 
@@ -210,8 +230,13 @@ def _alive_from_neigh(neigh, hosts):
 
 
 def scan_lan(interfaces=None, gateways=None, connector=connect_ms,
-             resolver=_names_for, deadline_s=SCAN_DEADLINE, now=None):
+             resolver=None, deadline_s=SCAN_DEADLINE, port_list=None,
+             now=None):
     """Scan the local subnet; every dependency injectable for tests."""
+    if resolver is None:
+        resolver = resolve_names
+    if port_list is None:
+        port_list = services.ALL_PORTS
     started = time.monotonic()
     deadline = started + deadline_s
     if interfaces is None:
@@ -258,7 +283,7 @@ def scan_lan(interfaces=None, gateways=None, connector=connect_ms,
 
         host_set = set(targets)
         alive = _alive_from_neigh(neigh, host_set)
-        if network["gateway"]:
+        if network["gateway"] and net.scannable(network["gateway"]):
             alive.add(network["gateway"])
         alive.add(addr["local"])
 
@@ -277,7 +302,7 @@ def scan_lan(interfaces=None, gateways=None, connector=connect_ms,
         remaining_pairs = []
         for ip in sorted(alive):
             answered = scanned.get(ip, {})
-            for port in services.ALL_PORTS:
+            for port in port_list:
                 if port not in answered:
                     remaining_pairs.append((ip, port))
         for ip, states in _probe_many(remaining_pairs, CONNECT_TIMEOUT,
@@ -290,15 +315,20 @@ def scan_lan(interfaces=None, gateways=None, connector=connect_ms,
             for state, ms in states.values():
                 if latency is None or ms < latency:
                     latency = ms
-            hosts[ip] = {"ip": ip, "alive": True, "via": "scan",
+            # via reflects evidence: "scan" only when a probe was answered;
+            # a neighbor-table seed that stayed silent is "neigh".
+            hosts[ip] = {"ip": ip, "alive": True,
+                         "via": "scan" if states else "neigh",
                          "latencyMs": None if latency is None else round(latency, 1),
                          "ports": [{"port": port}
                                    for port, (state, ms) in sorted(states.items())
                                    if state == "open"][:MAX_PORTS_PER_HOST]}
 
     # Neighbor table again: probing just refreshed it, so MACs are warm now.
-    neigh = net.neighbors()
-    names = resolver(sorted(hosts), deadline)
+    # Merge with the pre-scan read so a flaky post-scan read costs nothing.
+    neigh_after = net.neighbors()
+    neigh = {**neigh, **neigh_after}
+    resolved = resolver(sorted(hosts), deadline)
 
     out_hosts = []
     for ip in sorted(hosts, key=lambda text: tuple(int(p) for p in text.split("."))):
@@ -309,9 +339,9 @@ def scan_lan(interfaces=None, gateways=None, connector=connect_ms,
             service, klass = services.describe(probed["port"])
             ports.append({"port": probed["port"], "proto": "tcp",
                           "service": service, "class": klass})
-        out_hosts.append({
+        assembled = {
             "ip": ip,
-            "hostname": names.get(ip, ""),
+            "hostname": resolved.get(ip, ""),
             "mac": info.get("mac", ""),
             "vendor": vendor_of(info.get("mac", "")),
             "isSelf": ip == network["selfIp"],
@@ -319,7 +349,9 @@ def scan_lan(interfaces=None, gateways=None, connector=connect_ms,
             "via": entry["via"],
             "latencyMs": entry["latencyMs"],
             "ports": ports,
-        })
+        }
+        assembled["type"] = classify.classify(assembled)
+        out_hosts.append(assembled)
 
     open_ports = sum(len(h["ports"]) for h in out_hosts)
     return {

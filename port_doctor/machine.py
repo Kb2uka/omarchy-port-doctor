@@ -12,6 +12,8 @@ import socket
 import concurrent.futures as futures
 import time
 
+from . import services
+
 
 _MAX_LINES = 65536
 _MAX_PROCS = 8192
@@ -243,10 +245,13 @@ def machine_snapshot(proc_root="/proc", resolver=None, lan_cidrs=()):
         process = owner["comm"] if owner else ""
         pid = owner["pid"] if owner else None
         if sock["state"] in ("listening", "bound"):
+            service, klass = services.describe_socket(sock["localPort"],
+                                                      sock["proto"])
             listeners.append({
                 "proto": sock["proto"], "port": sock["localPort"],
                 "bind": sock["localIp"], "scope": _scope(sock["localIp"]),
                 "process": process, "pid": pid,
+                "service": service, "class": klass,
             })
         elif sock["state"] in ("close", "time-wait"):
             # time-wait corpses have no owner and say nothing about who is

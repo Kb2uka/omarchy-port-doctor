@@ -63,6 +63,8 @@ class MachineTests(unittest.TestCase):
         self.assertEqual(ssh["scope"], "all interfaces")
         self.assertEqual(ssh["process"], "myservice")
         self.assertEqual(ssh["pid"], 4321)
+        self.assertEqual(ssh["service"], "ssh")
+        self.assertEqual(ssh["class"], "remote")
 
         ipp = listeners[(631, "tcp")]
         self.assertEqual(ipp["scope"], "loopback only")
@@ -75,6 +77,36 @@ class MachineTests(unittest.TestCase):
 
         dhcp = listeners[(68, "udp")]
         self.assertEqual(dhcp["scope"], "all interfaces")
+        self.assertEqual(dhcp["service"], "dhcp")
+
+    def test_machine_payload_classifies_against_local_subnets(self):
+        """The CLI path must derive lan_cidrs itself (an earlier version
+        passed an empty list, so no peer could ever classify as lan)."""
+        captured = {}
+
+        def fake_snapshot(**kwargs):
+            captured.update(kwargs)
+            return {"hostname": "h", "listeners": [], "connections": [],
+                    "stats": {"listeners": 0, "connections": 0,
+                              "truncatedListeners": 0,
+                              "truncatedConnections": 0}}
+
+        original_interfaces = scanner.net.interfaces
+        original_snapshot = scanner.machine.machine_snapshot
+        scanner.net.interfaces = lambda: [
+            {"ifname": "wlan0",
+             "addrs": [{"local": "10.70.120.50", "prefixlen": 24}]},
+            {"ifname": "wan0",
+             "addrs": [{"local": "203.0.113.9", "prefixlen": 24}]},
+        ]
+        scanner.machine.machine_snapshot = fake_snapshot
+        try:
+            payload = scanner.machine_payload()
+        finally:
+            scanner.net.interfaces = original_interfaces
+            scanner.machine.machine_snapshot = original_snapshot
+        self.assertIsNone(payload["error"])
+        self.assertEqual(captured["lan_cidrs"], ("10.70.120.0/24",))
 
     def test_connections_and_kinds(self):
         snap = self.snapshot()
@@ -130,6 +162,30 @@ class MachineTests(unittest.TestCase):
         self.assertEqual(scanner.main(["bogus"]), 2)
         self.assertEqual(scanner.main([]), 2)
         self.assertEqual(scanner.main(["lan", "extra"]), 2)
+
+    def test_cli_accepts_profiles(self):
+        import contextlib
+        import io
+
+        port_lists = []
+
+        def fake_lan(**kwargs):
+            port_lists.append(kwargs.get("port_list"))
+            return {"network": {}, "hosts": [], "stats": {}}
+
+        original = scanner.scan.scan_lan
+        scanner.scan.scan_lan = fake_lan
+        try:
+            for mode in ("lan", "lan-quick"):
+                out = io.StringIO()
+                with contextlib.redirect_stdout(out):
+                    self.assertEqual(scanner.main([mode]), 0)
+                self.assertEqual(json.loads(out.getvalue())["profile"],
+                                 "quick" if mode == "lan-quick" else "standard")
+        finally:
+            scanner.scan.scan_lan = original
+        from port_doctor import services
+        self.assertEqual(port_lists, [None, services.DISCOVERY_PORTS])
 
 
 if __name__ == "__main__":
