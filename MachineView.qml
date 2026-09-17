@@ -200,7 +200,7 @@ Item {
     Row {
       width: parent.width
       height: parent.height - headerRow.implicitHeight - tilesRow.implicitHeight
-        - (mixBlock.visible ? mixBlock.implicitHeight : 0) - 3 * 14
+        - (mixBlock.visible ? mixBlock.implicitHeight + 3 * 14 : 2 * 14)
       spacing: 14
 
       // Listeners

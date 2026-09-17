@@ -88,7 +88,7 @@ Rectangle {
     anchors.fill: parent
 
     Sidebar {
-      width: root.width < 1160 ? 168 : 196
+      width: root.width < 940 ? 56 : (root.width < 1160 ? 168 : 196)
       height: parent.height
       fontMono: root.fontMono
       page: root.page
@@ -96,6 +96,7 @@ Rectangle {
       lastScanAt: root.scannedAt
       scanning: root.scanning
       compact: root.width < 1160
+      rail: root.width < 940
       onNavigate: function(page) { root.page = page }
       onProfileSelected: root.profileSelected(profile)
       onScanRequested: root.rescanRequested()
@@ -110,7 +111,7 @@ Rectangle {
     Column {
       width: parent.width - sidebarWidth - 1
       height: parent.height
-      property int sidebarWidth: root.width < 1160 ? 168 : 196
+      property int sidebarWidth: root.width < 940 ? 56 : (root.width < 1160 ? 168 : 196)
 
       TopBar {
         id: topBar

@@ -13,6 +13,7 @@ Rectangle {
   property string lastScanAt: ""
   property bool scanning: false
   property bool compact: false
+  property bool rail: false
 
   signal navigate(string page)
   signal profileSelected(string profile)
@@ -31,16 +32,19 @@ Rectangle {
 
   // Brand
   Text {
-    x: 20
+    x: root.rail ? 0 : 20
+    width: root.rail ? parent.width : -1
+    horizontalAlignment: root.rail ? Text.AlignHCenter : Text.AlignLeft
     y: 22
     textFormat: Text.PlainText
     text: "\u{F0437}"
     color: P.accent
     font.family: root.fontMono
-    font.pixelSize: 26
+    font.pixelSize: root.rail ? 22 : 26
   }
 
   Column {
+    visible: !root.rail
     x: 58
     y: 21
     spacing: 3
@@ -146,6 +150,7 @@ Rectangle {
     anchors.bottomMargin: 16
 
     Text {
+      visible: !root.rail
       textFormat: Text.PlainText
       text: "SCAN PROFILE"
       color: P.muted
@@ -156,6 +161,7 @@ Rectangle {
     }
 
     Rectangle {
+      visible: !root.rail
       width: parent.width
       height: 46
       radius: P.radius
@@ -208,6 +214,7 @@ Rectangle {
     }
 
     Row {
+      visible: !root.rail
       spacing: 6
       Text {
         textFormat: Text.PlainText
