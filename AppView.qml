@@ -40,8 +40,10 @@ Rectangle {
   property string selectedIp: ""
 
   // What this machine is called: its real hostname (or model) from the
-  // scanner's identity block; empty until the first payload lands.
-  readonly property string selfName: String(identity.label || "")
+  // scanner's identity block; empty until the first payload lands. The
+  // machine payload's hostname is the last fallback so an older or
+  // partial identity block still yields the real name.
+  readonly property string selfName: String(identity.label || identity.hostname || machineHostname || "")
 
   focus: true
   Keys.onEscapePressed: root.closeRequested()

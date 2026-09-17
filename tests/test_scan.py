@@ -357,3 +357,30 @@ class ControllerMergeTests(unittest.TestCase):
         remotes = [h for h in payload["hosts"] if h["remoteNet"]]
         self.assertEqual(len(remotes), scan.MAX_REMOTE_HOSTS)
         self.assertEqual(payload["controller"]["clients"], 200)
+
+    def test_slow_controller_is_abandoned_at_its_budget(self):
+        def controller(timeout=0):
+            time.sleep(5)
+            return dict(CENSUS)
+
+        started = time.monotonic()
+        # deadline 8s -> controller budget 1s; the scan must not wait 5.
+        payload = fake_scan(controller=controller, deadline_s=8.0)
+        self.assertLess(time.monotonic() - started, 4.0)
+        self.assertIn("budget", payload["controller"]["error"])
+        hosts = by_ip(payload)
+        self.assertIn("10.70.120.99", hosts)  # local results intact
+
+    def test_malformed_controller_mac_cannot_kill_the_scan(self):
+        census = dict(CENSUS)
+        census["clients"] = [
+            {"ip": "10.70.0.42", "mac": "zz:zz:zz:zz:zz:zz",
+             "name": "studio", "network": "Default", "vlan": 0},
+        ]
+        payload = fake_scan(controller=lambda timeout: census)
+        hosts = by_ip(payload)
+        # The scan survives and renders the row; the garbage MAC parses as
+        # not-private and vendors nothing.
+        self.assertIn("10.70.0.42", hosts)
+        self.assertEqual(hosts["10.70.0.42"]["vendor"], "")
+        self.assertFalse(hosts["10.70.0.42"]["macPrivate"])

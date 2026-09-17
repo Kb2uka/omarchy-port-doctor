@@ -25,6 +25,7 @@ import json
 import os
 import re
 import ssl
+import time
 import urllib.parse
 import urllib.request
 
@@ -170,7 +171,7 @@ def _client(entry):
     except (TypeError, ValueError):
         vlan = None
     return {"ip": ip,
-            "mac": str(entry.get("mac") or "").lower()[:17],
+            "mac": mac,
             "name": name,
             "network": _clean(entry.get("network") or ""),
             "vlan": vlan}
@@ -199,7 +200,9 @@ def controller_census(config=None, opener=None, timeout=2.5):
     """{"configured", "host", "site", "error", "clients", "networks"}.
 
     Never raises: any failure lands in "error" and the scan goes on with
-    whatever the local subnet reported.
+    whatever the local subnet reported. `timeout` bounds the WHOLE census:
+    the clients request gets what it needs and the network-labels request
+    takes whatever remains.
     """
     out = {"configured": False, "host": "", "site": "", "error": None,
            "clients": [], "networks": []}
@@ -208,26 +211,41 @@ def controller_census(config=None, opener=None, timeout=2.5):
         if config is None:
             out["error"] = error
             return out
+    # The key guard runs again here, not just in load_config: no caller may
+    # ever send the API key to a host that is not a private IPv4 literal.
+    host = _valid_host(config.get("host", "")) if isinstance(config, dict) \
+        else None
+    if host is None:
+        out["configured"] = True
+        out["error"] = "controller host must be a private IPv4 literal"
+        return out
     out["configured"] = True
-    out["host"] = config["host"]
+    out["host"] = host
     out["site"] = config["site"]
     base = "/proxy/network/api/s/" + urllib.parse.quote(config["site"],
                                                         safe="")[:32]
+    started = time.monotonic()
+
+    def remaining():
+        return max(0.1, timeout - (time.monotonic() - started))
+
     try:
-        sta = _get_json(config["host"], config["apiKey"], base + "/stat/sta",
-                        config["verifyTls"], timeout, opener)
+        sta = _get_json(host, config["apiKey"], base + "/stat/sta",
+                        config["verifyTls"], remaining(), opener)
     except Exception as error:  # TLS, HTTP, JSON: one honest string
         out["error"] = str(error)[:200]
         return out
     try:
-        conf = _get_json(config["host"], config["apiKey"],
-                         base + "/rest/networkconf", config["verifyTls"],
-                         timeout, opener)
+        conf = _get_json(host, config["apiKey"], base + "/rest/networkconf",
+                         config["verifyTls"], remaining(), opener)
     except Exception:
         conf = None  # network labels are nice-to-have; clients still count
 
+    # A crafted or confused response must never raise here: coerce to list.
+    sta_data = sta.get("data") if isinstance(sta, dict) else None
+    conf_data = conf.get("data") if isinstance(conf, dict) else None
     seen = set()
-    for entry in (sta.get("data") if isinstance(sta, dict) else [])[:4096]:
+    for entry in (sta_data if isinstance(sta_data, list) else [])[:4096]:
         client = _client(entry)
         if client is None or client["ip"] in seen:
             continue
@@ -235,11 +253,10 @@ def controller_census(config=None, opener=None, timeout=2.5):
         out["clients"].append(client)
         if len(out["clients"]) >= MAX_CLIENTS:
             break
-    if isinstance(conf, dict):
-        for entry in (conf.get("data") or [])[:256]:
-            network = _network(entry)
-            if network is not None:
-                out["networks"].append(network)
+    for entry in (conf_data if isinstance(conf_data, list) else [])[:256]:
+        network = _network(entry)
+        if network is not None:
+            out["networks"].append(network)
     return out
 
 

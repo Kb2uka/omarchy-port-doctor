@@ -329,17 +329,38 @@ def scan_lan(interfaces=None, gateways=None, connector=connect_ms,
         # Whole-network merge first, so controller-known hosts probe
         # alongside local ones inside the same deadline. The census is the
         # only way to see past this subnet: the controller knows every
-        # client on every network it manages.
+        # client on every network it manages. The fetch runs on a daemon
+        # thread (the resolver uses the same pattern): a hung or
+        # slow-dripping controller is abandoned at its budget and can never
+        # stretch the scan deadline.
         c_started = time.monotonic()
         budget = min(CONTROLLER_BUDGET,
                      max(0.0, deadline - time.monotonic() - SCAN_RESERVE))
         if budget > 0.25:
-            try:
-                census = controller(timeout=budget) or census
-            except Exception as error:
+            cell = {}
+
+            def fetch():
+                try:
+                    cell["census"] = controller(timeout=budget)
+                except Exception as error:
+                    cell["error"] = str(error)[:200]
+
+            worker = threading.Thread(target=fetch, daemon=True)
+            worker.start()
+            worker.join(budget)
+            if isinstance(cell.get("census"), dict):
+                census = cell["census"]
+            elif cell.get("error"):
                 census = {"configured": True, "host": "", "site": "",
-                          "error": str(error)[:200], "clients": [],
+                          "error": cell["error"], "clients": [],
                           "networks": []}
+            else:
+                # The default census cannot hang without a config file, so
+                # a timeout means a controller was configured but read
+                # nothing in time.
+                census = {"configured": True, "host": "", "site": "",
+                          "error": "controller read exceeded its time "
+                                   "budget", "clients": [], "networks": []}
         controller_ms = int((time.monotonic() - c_started) * 1000)
         for client in census.get("clients") or []:
             ip = client.get("ip") if isinstance(client, dict) else None
@@ -437,8 +458,13 @@ def scan_lan(interfaces=None, gateways=None, connector=connect_ms,
             ports.append({"port": probed["port"], "proto": "tcp",
                           "service": service, "class": klass})
         # Cross-VLAN MACs are unreachable (routing hides them), so the
-        # controller's record is the only source for remote hosts.
+        # controller's record is the only source for remote hosts. A
+        # malformed controller MAC must never kill the whole scan.
         mac = info.get("mac", "") or str(client.get("mac") or "")
+        try:
+            mac_private = bool(mac) and (int(mac[:2], 16) & 0x02) != 0
+        except ValueError:
+            mac_private = False
         if client.get("network"):
             net_name, vlan = client["network"], client.get("vlan")
         else:
@@ -447,8 +473,7 @@ def scan_lan(interfaces=None, gateways=None, connector=connect_ms,
             "ip": ip,
             "hostname": resolved.get(ip, "") or str(client.get("name") or ""),
             "mac": mac,
-            "macPrivate": bool(mac)
-              and (int(mac[:2], 16) & 0x02) != 0,
+            "macPrivate": mac_private,
             "vendor": vendor_of(mac),
             "isSelf": ip == network["selfIp"],
             "isGateway": bool(network["gateway"]) and ip == network["gateway"],

@@ -18,6 +18,14 @@ Item {
   property string filter: "all"
   property string networkFilter: ""
 
+  // A stale network selection must not strand the table empty: when a
+  // rescan loses that network, fall back to All Networks.
+  onNetworksPresentChanged: {
+    if (root.networkFilter !== ""
+        && root.networksPresent.indexOf(root.networkFilter) < 0)
+      root.networkFilter = ""
+  }
+
   readonly property int onlineCount: {
     var n = 0
     for (var i = 0; i < hosts.length; i++) if (hosts[i].online) n++
@@ -150,15 +158,16 @@ Item {
   }
 
   // Network filter chips, shown only when the controller brought more
-  // than one network into view.
-  Row {
+  // than one network into view. Flow wraps chips instead of overflowing
+  // narrow windows.
+  Flow {
     id: networkRow
     visible: root.networksPresent.length > 1
     anchors.left: parent.left
     anchors.right: parent.right
     anchors.top: titleRow.visible ? titleRow.bottom : parent.top
     anchors.topMargin: titleRow.visible ? 8 : 0
-    height: visible ? 26 : 0
+    height: visible ? implicitHeight : 0
     spacing: 6
 
     Repeater {

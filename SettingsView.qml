@@ -121,6 +121,8 @@ Item {
       textFormat: Text.PlainText
       width: parent.width - 44
       text: {
+        if (root.controller.configured === undefined)
+          return "No scan has reported controller status yet; the first scan answers this within seconds."
         if (root.controller.configured === true) {
           if (root.controllerError() !== "")
             return "Configured at " + String(root.controller.host || "?")

@@ -211,6 +211,42 @@ class CensusTests(unittest.TestCase):
                          ("", None))
         self.assertEqual(unifi.network_for_ip("junk", networks), ("", None))
 
+    def test_malformed_mac_is_discarded(self):
+        bad = {"data": [{"ip": "10.70.0.55", "mac": "zz:zz:zz:zz:zz:zz",
+                         "name": "broken"}]}
+
+        def opener(request, timeout=0):
+            if request.full_url.endswith("/stat/sta"):
+                return FakeResponse(bad)
+            raise OSError("no networks")
+
+        census = unifi.controller_census(config=self.config(), opener=opener)
+        self.assertEqual(census["clients"][0]["mac"], "")
+
+    def test_non_list_data_never_raises(self):
+        weird = {"data": {"not": "a list"}}
+
+        def opener(request, timeout=0):
+            return FakeResponse(weird)
+
+        census = unifi.controller_census(config=self.config(), opener=opener)
+        self.assertIsNone(census["error"])
+        self.assertEqual(census["clients"], [])
+        self.assertEqual(census["networks"], [])
+
+    def test_config_host_is_revalidated_before_the_key_rides(self):
+        calls = []
+
+        def opener(request, timeout=0):
+            calls.append(request.full_url)
+            return FakeResponse(STA)
+
+        config = {"host": "8.8.8.8", "site": "default", "apiKey": "k",
+                  "verifyTls": False}
+        census = unifi.controller_census(config=config, opener=opener)
+        self.assertEqual(calls, [])
+        self.assertIn("private", census["error"])
+
 
 if __name__ == "__main__":
     unittest.main()
