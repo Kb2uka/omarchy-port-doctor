@@ -9,6 +9,7 @@ an absolute deadline bound the whole run.
 
 import concurrent.futures as futures
 import errno
+import ipaddress
 import socket
 import threading
 import time
@@ -256,9 +257,17 @@ def scan_lan(interfaces=None, gateways=None, connector=connect_ms,
         for addr in iface["addrs"]:
             if not net.scannable(addr["local"]):
                 continue
-            # Point-to-point links (/31, /32 VPNs) are never a useful LAN
-            # scan even when they carry the default route; sink them last.
-            rank = (addr["prefixlen"] >= 31, iface["ifname"] != primary_dev,
+            # Point-to-point links (/30-, VPN tunnels) are never a useful
+            # LAN scan even when they carry the default route; sink them.
+            try:
+                link_local = ipaddress.IPv4Address(addr["local"]).is_link_local
+            except ValueError:
+                continue
+            if link_local:
+                # APIPA-only hosts stay passive: nothing is probed and the
+                # neighbor table alone is shown (see SECURITY.md).
+                continue
+            rank = (addr["prefixlen"] >= 30, iface["ifname"] != primary_dev,
                     addr["prefixlen"])
             if chosen is None or rank < chosen[0]:
                 chosen = (rank, iface, addr)

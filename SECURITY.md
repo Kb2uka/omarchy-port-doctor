@@ -7,11 +7,13 @@ shell does not sandbox plugins, so install only source you trust.
 
 - Scan targets are derived from the machine's own interface configuration
   (`ip -j addr/route/neigh`), never from user input, files, or the network
-  itself. Only private (RFC 1918, CGNAT) and link-local IPv4 addresses are
-  ever probed, and every connect re-checks that rule. Prefixes wider than
-  /24 are collapsed to the /24 holding the machine's own address, capped at
-  256 probe targets. (When no private interface exists at all, zero probes
-  are sent and the passive neighbor-table view is capped at 1024 entries.)
+  itself. Only private (RFC 1918, CGNAT) IPv4 addresses are ever probed, and
+  every connect re-checks that rule. Prefixes wider than /24 are collapsed
+  to the /24 holding the machine's own address, capped at 256 probe targets.
+  Link-local (169.254/16) neighbors may be displayed from the neighbor
+  table but are never probed. When no private interface exists at all, zero
+  probes and zero name queries are sent, and the passive neighbor-table view
+  is capped at 1024 entries.
 - Probing is a bare TCP connect: no application bytes are sent or received,
   no banners are read, no raw sockets are used. The only UDP the plugin
   crafts itself is one small mDNS PTR question per nameless host to the
