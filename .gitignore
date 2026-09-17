@@ -1,0 +1,6 @@
+AGENTS.md
+CLAUDE.md
+.artifacts/
+__pycache__/
+*.pyc
+.DS_Store
