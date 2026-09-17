@@ -172,7 +172,7 @@ class CensusTests(unittest.TestCase):
         census = unifi.controller_census(config=self.config(),
                                          opener=dead_opener)
         self.assertTrue(census["configured"])
-        self.assertIn("refused", census["error"])
+        self.assertIn("connection failed", census["error"])
         self.assertEqual(census["clients"], [])
 
     def test_client_cap_is_enforced(self):
@@ -201,7 +201,8 @@ class CensusTests(unittest.TestCase):
 
         census = unifi.controller_census(
             config=self.config(), opener=lambda request, timeout=0: Huge())
-        self.assertIn("2 MiB", census["error"])
+        self.assertIn("invalid controller configuration or response", census["error"])
+        self.assertEqual(census["clients"], [])
 
     def test_network_for_ip(self):
         networks = [{"name": "IoT", "vlan": 3, "subnet": "10.70.90.0/24"}]

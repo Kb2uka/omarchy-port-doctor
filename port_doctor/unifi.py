@@ -14,8 +14,7 @@ ever reads it, and only these keys:
     UNIFI_HOST=10.0.0.1        IP literal, private space only
     UNIFI_API_KEY=...          read-only local API key
     UNIFI_SITE=default         optional
-    UNIFI_VERIFY_TLS=true      optional; stock controllers self-sign,
-                               so the default is false
+    UNIFI_VERIFY_TLS=true      optional; verification defaults on
 
 A pre-existing ~/.config/unifi/env with the same keys is also honored.
 """
@@ -26,6 +25,7 @@ import os
 import re
 import ssl
 import time
+import urllib.error
 import urllib.parse
 import urllib.request
 
@@ -115,7 +115,7 @@ def load_config(paths=None, environ=None):
                 "site": site or DEFAULT_SITE,
                 "apiKey": key,
                 "verifyTls": values.get("UNIFI_VERIFY_TLS", "").strip().lower()
-                             in ("1", "true", "yes"),
+                             not in ("0", "false", "no"),
             }, None)
         if first_error is None:
             if not host_text.strip():
@@ -128,21 +128,31 @@ def load_config(paths=None, environ=None):
     return None, first_error
 
 
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        # Credentials belong only to the configured controller endpoint.
+        return None
+
+
 def _get_json(host, api_key, path, verify_tls, timeout, opener=None):
     """One bounded HTTPS GET against the controller; raises on failure."""
     request = urllib.request.Request("https://" + host + path,
                                      headers={"X-API-KEY": api_key})
-    if opener is not None:
-        response = opener(request, timeout=timeout)
-    else:
+    if opener is None:
         context = ssl.create_default_context()
         if not verify_tls:
-            # Stock UniFi controllers serve a self-signed certificate;
-            # the host guard above is what keeps the key private.
+            # Only an explicit user opt-out permits an unauthenticated peer.
             context.check_hostname = False
             context.verify_mode = ssl.CERT_NONE
-        response = urllib.request.urlopen(request, timeout=timeout,
-                                          context=context)
+        client = urllib.request.build_opener(
+            urllib.request.ProxyHandler({}),
+            urllib.request.HTTPSHandler(context=context), _NoRedirect())
+        opener = client.open
+    try:
+        response = opener(request, timeout=timeout)
+    except urllib.error.HTTPError as error:
+        error.close()
+        raise
     with response:
         raw = response.read(_MAX_RESPONSE + 1)
     if len(raw) > _MAX_RESPONSE:
@@ -232,8 +242,16 @@ def controller_census(config=None, opener=None, timeout=2.5):
     try:
         sta = _get_json(host, config["apiKey"], base + "/stat/sta",
                         config["verifyTls"], remaining(), opener)
-    except Exception as error:  # TLS, HTTP, JSON: one honest string
-        out["error"] = str(error)[:200]
+    except Exception as error:
+        # Exception messages can echo header values or untrusted HTTP text.
+        if isinstance(error, urllib.error.HTTPError):
+            out["error"] = f"controller HTTP request failed ({error.code})"
+        elif isinstance(error, ValueError):
+            out["error"] = "invalid controller configuration or response"
+        elif isinstance(error, OSError):
+            out["error"] = "controller connection failed; check TLS and connectivity"
+        else:
+            out["error"] = "controller request failed"
         return out
     try:
         conf = _get_json(host, config["apiKey"], base + "/rest/networkconf",
