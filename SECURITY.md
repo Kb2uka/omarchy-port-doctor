@@ -13,7 +13,9 @@ shell does not sandbox plugins, so install only source you trust.
   256 probe targets. (When no private interface exists at all, zero probes
   are sent and the passive neighbor-table view is capped at 1024 entries.)
 - Probing is a bare TCP connect: no application bytes are sent or received,
-  no banners are read, no UDP packets are crafted, no raw sockets are used.
+  no banners are read, no raw sockets are used. The only UDP ever sent is a
+  single small mDNS PTR question per nameless host to the fixed local
+  multicast group (224.0.0.251:5353); answers are parsed with strict bounds.
 - No root, sudo, pkexec, setuid, capabilities, services, timers, package
   installation, downloads, or writes to the filesystem. All state lives in
   the panel's memory and disappears with it.
