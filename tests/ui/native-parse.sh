@@ -2,11 +2,14 @@
 # Load the plugin natively under a headless Weston compositor and cycle the
 # window through every page. Fails on any QML error in the shell log. The
 # scanner shim is replaced with a fixture stub so the harness renders
-# realistic data without sending any network traffic.
+# realistic data without sending any network traffic. Two passes: a small
+# eight-host network and, via PD_FIXTURE=large, a dense multi-network census
+# so the map's large-network layout is exercised too.
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 art="$PWD/.artifacts/feat_port_doctor"
 mkdir -p "$art"
+
 harness="$(mktemp -d /tmp/pd-native-XXXXXX)"
 weston_pid=""
 cleanup() {
@@ -21,6 +24,7 @@ cat > "$harness/deck/port-doctor.py" <<'STUB'
 #!/usr/bin/python3 -I
 """Fixture stand-in for the real scanner: canned payloads, no network."""
 import json
+import os
 import sys
 
 LAN = {
@@ -83,6 +87,108 @@ LAN = {
               "deadlineHit": False}
 }
 
+
+def large_lan():
+    """A dense controller census: four networks, dozens of hosts, so the
+    map's clustered large-network layout gets exercised natively."""
+    hosts = [
+        {"ip": "10.70.120.1", "hostname": "unifi.localdomain",
+         "mac": "f0:9f:c2:11:22:33", "macPrivate": False, "vendor": "Ubiquiti",
+         "isSelf": False, "isGateway": True, "via": "scan", "latencyMs": 1.1,
+         "type": "router", "network": "SHACK", "vlan": 0, "remoteNet": False,
+         "ports": [{"port": 53, "proto": "tcp", "service": "dns", "class": "infra"},
+                   {"port": 443, "proto": "tcp", "service": "https", "class": "web"}]},
+        {"ip": "10.70.120.149", "hostname": "xps16",
+         "mac": "dc:54:75:aa:bb:cc", "macPrivate": False, "vendor": "Dell",
+         "isSelf": True, "isGateway": False, "via": "scan", "latencyMs": 0.3,
+         "type": "laptop", "network": "SHACK", "vlan": 0, "remoteNet": False,
+         "ports": [{"port": 22, "proto": "tcp", "service": "ssh", "class": "remote"}]},
+    ]
+    shack = [
+        ("homebase", "10.70.120.219", "server", "Dell", [22, 445]),
+        ("optiplex", "10.70.120.135", "desktop", "Dell", [22]),
+        ("g2pi", "10.70.120.152", "raspberry-pi", "Raspberry Pi", [22]),
+        ("raspberrypi", "10.70.120.41", "raspberry-pi", "Raspberry Pi", [22, 80]),
+        ("windows-gb2j9c", "10.70.120.88", "desktop", "", [3389]),
+        ("jillians-air", "10.70.120.96", "laptop", "Apple", []),
+        ("carters-pc", "10.70.120.104", "desktop", "", [3389]),
+        ("machio-c", "10.70.120.133", "desktop", "", []),
+        ("dreame-vacuum-r5c", "10.70.120.146", "iot", "Dreame", []),
+        ("amazon-391af1e8", "10.70.120.158", "iot", "Amazon", []),
+    ]
+    default = [
+        ("studio", "10.70.0.42", "desktop", "Apple", [22, 11434]),
+        ("tower", "10.70.0.159", "server", "", [22, 445]),
+        ("windows-ci-1", "10.70.0.26", "desktop", "", [3389]),
+        ("windows-ci-2", "10.70.0.27", "desktop", "", [3389]),
+        ("windows-ci-3", "10.70.0.110", "desktop", "", []),
+        ("windows-test", "10.70.0.225", "desktop", "", [3389]),
+        ("linux-ci-2", "10.70.0.10", "server", "", [22]),
+        ("zeusagent", "10.70.0.25", "server", "", [22]),
+        ("dougs-mac-mini", "10.70.0.71", "desktop", "Apple", [22]),
+        ("studios-imac-2", "10.70.0.73", "desktop", "Apple", []),
+    ]
+    iot = [
+        ("ringspotlightcam-f6", "10.70.90.171", "camera", "Ring", []),
+        ("ringspotlightcam-5f", "10.70.90.172", "camera", "Ring", []),
+        ("ringstickupcam-56", "10.70.90.173", "camera", "Ring", []),
+        ("ringstickupcam-fa", "10.70.90.174", "camera", "Ring", [554]),
+        ("ringdoorbell-00", "10.70.90.85", "camera", "Ring", []),
+        ("amazon-smart-tv", "10.70.90.123", "tv", "Amazon", []),
+        ("amazon-e35ba17", "10.70.90.57", "iot", "Amazon", []),
+        ("echo-kitchen", "10.70.90.20", "iot", "Amazon", []),
+        ("echo-office", "10.70.90.21", "iot", "Amazon", []),
+        ("firetv-living", "10.70.90.99", "tv", "Amazon", []),
+        ("wyze-cam-garage", "10.70.90.140", "camera", "Wyze", [554]),
+        ("tuya-plug-bench", "10.70.90.141", "iot", "Tuya", []),
+        ("hp-printer", "10.70.90.60", "printer", "HP", [9100]),
+        ("nest-thermostat", "10.70.90.61", "iot", "Google", []),
+        ("roborock-s7", "10.70.90.62", "iot", "Roborock", []),
+        ("blink-sync", "10.70.90.63", "camera", "Blink", []),
+        ("wled-shelf", "10.70.90.64", "iot", "", [80]),
+        ("esphome-sensor1", "10.70.90.65", "iot", "", []),
+    ]
+    vpn = [
+        ("amandas-air", "192.168.3.2", "laptop", "Apple", []),
+        ("iphone-kb2uka", "192.168.3.4", "phone", "Apple", []),
+    ]
+
+    def emit(rows, network, vlan, routed):
+        for name, ip, kind, vendor, ports in rows:
+            hosts.append({
+                "ip": ip, "hostname": name,
+                "mac": "02:11:22:" + ":".join(ip.split(".")[1:]),
+                "macPrivate": vendor == "", "vendor": vendor,
+                "isSelf": False, "isGateway": False,
+                "via": "unifi" if routed else "scan",
+                "latencyMs": None if routed else 2.4,
+                "type": kind, "network": network, "vlan": vlan,
+                "remoteNet": routed,
+                "ports": [{"port": p, "proto": "tcp", "service": "svc",
+                           "class": "infra"} for p in ports]})
+
+    emit(shack, "SHACK", 0, False)
+    emit(default, "Default", 1, True)
+    emit(iot, "IoT", 3, True)
+    emit(vpn, "WireGuard", 9, True)
+    open_ports = sum(len(h["ports"]) for h in hosts)
+    return {
+        "version": 1, "mode": "lan", "scannedAt": "2026-09-17T12:00:00+00:00",
+        "error": None, "profile": "standard",
+        "identity": {"hostname": "xps16", "model": "XPS 16 DA16260",
+                     "manufacturer": "Dell Inc.", "label": "xps16"},
+        "controller": {"configured": True, "host": "10.70.120.1",
+                       "site": "default", "clients": len(hosts), "error": None},
+        "network": {"cidr": "10.70.120.0/24", "ifname": "eth0",
+                    "selfIp": "10.70.120.149", "gateway": "10.70.120.1",
+                    "truncated": False, "passiveOnly": False, "note": ""},
+        "hosts": hosts,
+        "stats": {"targets": 254, "hostsUp": len(hosts), "openPorts": open_ports,
+                  "scanMs": 9800, "discoveryMs": 2100, "controllerMs": 240,
+                  "deadlineHit": False}
+    }
+
+
 MACHINE = {
     "version": 1, "mode": "machine", "scannedAt": "2026-09-17T12:00:00+00:00",
     "error": None, "hostname": "xps16",
@@ -119,7 +225,8 @@ MACHINE = {
 
 mode = sys.argv[1] if len(sys.argv) > 1 else ""
 if mode in ("lan", "lan-quick"):
-    print(json.dumps(LAN, separators=(",", ":")))
+    payload = large_lan() if os.environ.get("PD_FIXTURE") == "large" else LAN
+    print(json.dumps(payload, separators=(",", ":")))
 elif mode == "machine":
     print(json.dumps(MACHINE, separators=(",", ":")))
 else:
@@ -136,14 +243,14 @@ ShellRoot {
   Timer { interval: 500; running: true; onTriggered: plugin.open() }
   Timer { interval: 1100; running: true; onTriggered: plugin.setPage("devices") }
   Timer { interval: 1500; running: true; onTriggered: plugin.setPage("ports") }
-  Timer { interval: 1900; running: true; onTriggered: plugin.setPage("services") }
-  Timer { interval: 2300; running: true; onTriggered: plugin.setPage("machine") }
-  Timer { interval: 2700; running: true; onTriggered: plugin.setPage("watch") }
-  Timer { interval: 3100; running: true; onTriggered: plugin.setPage("history") }
-  Timer { interval: 3500; running: true; onTriggered: plugin.setPage("settings") }
-  Timer { interval: 3900; running: true; onTriggered: plugin.setPage("topology") }
-  Timer { interval: 4300; running: true; onTriggered: plugin.close() }
-  Timer { interval: 4600; running: true; onTriggered: Qt.quit() }
+  Timer { interval: 1700; running: true; onTriggered: plugin.setPage("services") }
+  Timer { interval: 2100; running: true; onTriggered: plugin.setPage("machine") }
+  Timer { interval: 2500; running: true; onTriggered: plugin.setPage("watch") }
+  Timer { interval: 2900; running: true; onTriggered: plugin.setPage("history") }
+  Timer { interval: 3300; running: true; onTriggered: plugin.setPage("settings") }
+  Timer { interval: 3700; running: true; onTriggered: plugin.setPage("topology") }
+  Timer { interval: 4100; running: true; onTriggered: plugin.close() }
+  Timer { interval: 4400; running: true; onTriggered: Qt.quit() }
 }
 QML
 export XDG_RUNTIME_DIR="$harness/runtime"
@@ -176,7 +283,14 @@ for attempt in {1..50}; do
   kill -0 "$weston_pid" 2>/dev/null || { cat "$art/weston.log"; exit 1; }
   sleep 0.1
 done
-QT_QPA_PLATFORM=wayland python3 tests/ui/native-run.py "$harness" "$art/native-parse.log"
-cat "$art/native-parse.log"
-rg -q 'Configuration Loaded' "$art/native-parse.log"
-! rg -q 'ERROR|ReferenceError|TypeError|is not a type|Cannot assign|Required property' "$art/native-parse.log"
+
+run_pass() {
+  local fixture="$1" log="$2"
+  PD_FIXTURE="$fixture" QT_QPA_PLATFORM=wayland python3 tests/ui/native-run.py "$harness" "$log"
+  cat "$log"
+  grep -q 'Configuration Loaded' "$log"
+  ! grep -Eq 'ERROR|ReferenceError|TypeError|is not a type|Cannot assign|Required property' "$log"
+}
+
+run_pass small "$art/native-parse.log"
+run_pass large "$art/native-parse-large.log"
