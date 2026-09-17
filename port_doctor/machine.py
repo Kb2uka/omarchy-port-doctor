@@ -47,20 +47,30 @@ def _decode_ip(text, v6):
             return None
         raw = raw[::-1]
     try:
-        return str(ipaddress.ip_address(raw))
+        addr = ipaddress.ip_address(raw)
     except ValueError:
         return None
+    # Dual-stack sockets report IPv4 peers as ::ffff:a.b.c.d; classify the
+    # mapped IPv4 address so lan/loopback/scope logic sees the real peer.
+    mapped = getattr(addr, "ipv4_mapped", None)
+    return str(mapped) if mapped is not None else str(addr)
 
 
 def _parse_net_file(path, v6, proto):
     """Parse one /proc/net/{tcp,tcp6,udp,udp6} into socket dicts."""
     out = []
     try:
-        with open(path, "r", errors="replace") as handle:
-            lines = handle.read().splitlines()
+        handle = open(path, "r", errors="replace")
     except OSError:
         return out
-    for line in lines[1:_MAX_LINES + 1]:
+    lines = []
+    with handle:
+        handle.readline()  # header
+        for line in handle:
+            if len(lines) >= _MAX_LINES:
+                break
+            lines.append(line)
+    for line in lines:
         parts = line.split()
         if len(parts) < 10:
             continue
@@ -174,6 +184,9 @@ def _scope(ip):
     return "one interface"
 
 
+_CGNAT = ipaddress.ip_network("100.64.0.0/10")
+
+
 def _remote_kind(ip, lan_prefixes):
     try:
         addr = ipaddress.ip_address(ip)
@@ -184,7 +197,7 @@ def _remote_kind(ip, lan_prefixes):
     for prefix in lan_prefixes:
         if addr in prefix:
             return "lan"
-    if addr.is_private or addr.is_link_local:
+    if addr.is_private or addr.is_link_local or addr in _CGNAT:
         return "private"
     return "internet"
 

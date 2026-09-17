@@ -190,3 +190,15 @@ class MachineTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class AddressFormTests(unittest.TestCase):
+    def test_ipv4_mapped_ipv6_unwraps(self):
+        self.assertEqual(machine._decode_ip("0000000000000000FFFF00000100000A", True),
+                         "10.0.0.1")
+        self.assertEqual(machine._decode_ip("00000000000000000000000001000000", True),
+                         "::1")
+
+    def test_cgnat_is_private_not_internet(self):
+        self.assertEqual(machine._remote_kind("100.64.1.2", ()), "private")
+        self.assertEqual(machine._remote_kind("8.8.8.8", ()), "internet")

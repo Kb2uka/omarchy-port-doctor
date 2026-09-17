@@ -192,3 +192,28 @@ class ScanTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class InterfaceChoiceTests(unittest.TestCase):
+    def test_point_to_point_vpn_never_beats_the_lan(self):
+        ifaces = [
+            {"ifname": "wg0", "addrs": [{"local": "10.9.0.2", "prefixlen": 30}]},
+            {"ifname": "wlan0", "addrs": [{"local": "10.70.120.50", "prefixlen": 24}]},
+        ]
+        gws = [{"gateway": "10.9.0.1", "dev": "wg0"}]
+        payload = fake_scan(interfaces=ifaces, gateways=gws)
+        self.assertEqual(payload["network"]["ifname"], "wlan0")
+        self.assertEqual(payload["network"]["cidr"], "10.70.120.0/24")
+
+    def test_link_local_only_is_passive(self):
+        calls = []
+
+        def connector(ip, port, timeout):
+            calls.append((ip, port))
+            return "open", 1.0
+
+        ifaces = [{"ifname": "eth0",
+                   "addrs": [{"local": "169.254.1.5", "prefixlen": 16}]}]
+        payload = fake_scan(interfaces=ifaces, gateways=[], connector=connector)
+        self.assertEqual(calls, [])
+        self.assertTrue(payload["network"]["passiveOnly"])
