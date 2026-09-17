@@ -14,7 +14,7 @@ import socket
 import threading
 import time
 
-from . import classify, names, net, services
+from . import classify, names, net, services, unifi
 
 
 CONNECT_TIMEOUT = 0.3
@@ -22,9 +22,14 @@ SCAN_DEADLINE = 11.0
 NAME_DEADLINE = 1.5
 THREADS = 128
 NAME_THREADS = 16
-MAX_NAMES = 64
+MAX_NAMES = 192
 MAX_PORTS_PER_HOST = 64
+MAX_REMOTE_HOSTS = 128
 _MAX_NAME = 63
+# The controller census rides the same absolute deadline as the scan and
+# always leaves at least SCAN_RESERVE seconds for actual probing.
+CONTROLLER_BUDGET = 3.0
+SCAN_RESERVE = 7.0
 
 
 def connect_ms(ip, port, timeout):
@@ -236,10 +241,17 @@ def _alive_from_neigh(neigh, hosts):
 
 def scan_lan(interfaces=None, gateways=None, connector=connect_ms,
              resolver=None, deadline_s=SCAN_DEADLINE, port_list=None,
-             now=None):
-    """Scan the local subnet; every dependency injectable for tests."""
+             now=None, controller=None):
+    """Scan known networks; every dependency injectable for tests.
+
+    controller: a callable(timeout=) returning a census dict (unifi.py).
+    The default reads the user's optional UniFi config. Passive mode never
+    calls it: no private interface still means zero outbound traffic.
+    """
     if resolver is None:
         resolver = resolve_names
+    if controller is None:
+        controller = unifi.controller_census
     if port_list is None:
         port_list = services.ALL_PORTS
     started = time.monotonic()
@@ -279,10 +291,19 @@ def scan_lan(interfaces=None, gateways=None, connector=connect_ms,
                "note": ""}
     hosts = {}
     discovery_ms = 0
+    controller_ms = 0
+    host_set = set()
+    client_by_ip = {}
+    unifi_seeded = set()
+    remote_set = set()
+    census = {"configured": False, "host": "", "site": "", "error": None,
+              "clients": [], "networks": []}
 
     if chosen is None:
         # No scannable (private/link-local) interface: refuse to send any
-        # probe traffic and report only what the neighbor table already knows.
+        # probe traffic and report only what the neighbor table already
+        # knows. The controller is never contacted here either; passive
+        # mode stays absolutely quiet.
         network["note"] = "no private IPv4 interface; showing the neighbor table only"
         for ip, info in neigh.items():
             if net.scannable(ip) and info.get("state") not in ("FAILED", ""):
@@ -305,6 +326,65 @@ def scan_lan(interfaces=None, gateways=None, connector=connect_ms,
             alive.add(network["gateway"])
         alive.add(addr["local"])
 
+        # Whole-network merge first, so controller-known hosts probe
+        # alongside local ones inside the same deadline. The census is the
+        # only way to see past this subnet: the controller knows every
+        # client on every network it manages. The fetch runs on a daemon
+        # thread (the resolver uses the same pattern): a hung or
+        # slow-dripping controller is abandoned at its budget and can never
+        # stretch the scan deadline.
+        c_started = time.monotonic()
+        budget = min(CONTROLLER_BUDGET,
+                     max(0.0, deadline - time.monotonic() - SCAN_RESERVE))
+        if budget > 0.25:
+            cell = {}
+
+            def fetch():
+                try:
+                    cell["census"] = controller(timeout=budget)
+                except Exception as error:
+                    cell["error"] = str(error)[:200]
+
+            try:
+                worker = threading.Thread(target=fetch, daemon=True)
+                worker.start()
+                worker.join(budget)
+            except Exception as error:
+                # Even thread creation failing must not take the scan down.
+                cell = {"error": str(error)[:200]}
+            if isinstance(cell.get("census"), dict):
+                census = cell["census"]
+            elif cell.get("error"):
+                census = {"configured": True, "host": "", "site": "",
+                          "error": cell["error"], "clients": [],
+                          "networks": []}
+            elif "census" in cell:
+                pass  # non-dict return: the default (unconfigured) stands
+            else:
+                # The default census cannot hang without a config file, so
+                # a timeout means a controller was configured but read
+                # nothing in time.
+                census = {"configured": True, "host": "", "site": "",
+                          "error": "controller read exceeded its time "
+                                   "budget", "clients": [], "networks": []}
+        controller_ms = int((time.monotonic() - c_started) * 1000)
+        for client in census.get("clients") or []:
+            ip = client.get("ip") if isinstance(client, dict) else None
+            if ip and net.scannable(ip):
+                client_by_ip[ip] = client
+        for ip in sorted(client_by_ip):
+            if ip in alive:
+                continue
+            if ip in host_set:
+                # A local-subnet member the probes may miss (sleeping or
+                # firewalled); the controller vouches for its presence.
+                alive.add(ip)
+                unifi_seeded.add(ip)
+            elif len(remote_set) < MAX_REMOTE_HOSTS:
+                alive.add(ip)
+                unifi_seeded.add(ip)
+                remote_set.add(ip)
+
         discovery_started = time.monotonic()
         pairs = [(ip, port) for ip in targets if ip not in alive
                  for port in services.DISCOVERY_PORTS]
@@ -317,8 +397,20 @@ def scan_lan(interfaces=None, gateways=None, connector=connect_ms,
         # is settled, so the full pass skips it instead of re-probing, and
         # its latency feeds the host's response time.
         scanned = {ip: dict(states) for ip, states in probe.items()}
+
+        # Remote hosts answer for their ports on the discovery set first;
+        # only responders get the full table, so an isolated network cannot
+        # burn the whole deadline on timeouts.
+        remote_pairs = [(ip, port) for ip in sorted(remote_set)
+                        for port in services.DISCOVERY_PORTS]
+        for ip, states in _probe_many(remote_pairs, CONNECT_TIMEOUT,
+                                      deadline, connector).items():
+            scanned.setdefault(ip, {}).update(states)
+
         remaining_pairs = []
         for ip in sorted(alive):
+            if ip in remote_set and ip not in scanned:
+                continue  # filtered through the router: presence only
             answered = scanned.get(ip, {})
             for port in port_list:
                 if port not in answered:
@@ -333,9 +425,12 @@ def scan_lan(interfaces=None, gateways=None, connector=connect_ms,
             for state, ms in states.values():
                 if latency is None or ms < latency:
                     latency = ms
-            # via is evidence, honestly: probes answered, or the neighbor
-            # table knew the host, or it is one of the fixed local anchors.
-            if states:
+            # via is evidence, honestly: the controller vouched for the
+            # host, probes answered, the neighbor table knew it, or it is
+            # one of the fixed local anchors.
+            if ip in unifi_seeded:
+                via = "unifi"
+            elif states:
                 via = "scan"
             elif ip in neigh_seeded:
                 via = "neigh"
@@ -356,28 +451,44 @@ def scan_lan(interfaces=None, gateways=None, connector=connect_ms,
     # Name resolution only happens on the active path; passive mode sends
     # nothing at all, including resolver and mDNS queries.
     resolved = {} if network["passiveOnly"] else resolver(sorted(hosts), deadline)
+    census_networks = census.get("networks") or []
 
     out_hosts = []
     for ip in sorted(hosts, key=lambda text: tuple(int(p) for p in text.split("."))):
         info = neigh.get(ip, {})
         entry = hosts[ip]
+        client = client_by_ip.get(ip) or {}
         ports = []
         for probed in entry["ports"]:
             service, klass = services.describe(probed["port"])
             ports.append({"port": probed["port"], "proto": "tcp",
                           "service": service, "class": klass})
+        # Cross-VLAN MACs are unreachable (routing hides them), so the
+        # controller's record is the only source for remote hosts. A
+        # malformed controller MAC must never kill the whole scan.
+        mac = info.get("mac", "") or str(client.get("mac") or "")
+        try:
+            mac_private = bool(mac) and (int(mac[:2], 16) & 0x02) != 0
+        except ValueError:
+            mac_private = False
+        if client.get("network"):
+            net_name, vlan = client["network"], client.get("vlan")
+        else:
+            net_name, vlan = unifi.network_for_ip(ip, census_networks)
         assembled = {
             "ip": ip,
-            "hostname": resolved.get(ip, ""),
-            "mac": info.get("mac", ""),
-            "macPrivate": bool(info.get("mac"))
-              and (int(info["mac"][:2], 16) & 0x02) != 0,
-            "vendor": vendor_of(info.get("mac", "")),
+            "hostname": resolved.get(ip, "") or str(client.get("name") or ""),
+            "mac": mac,
+            "macPrivate": mac_private,
+            "vendor": vendor_of(mac),
             "isSelf": ip == network["selfIp"],
             "isGateway": bool(network["gateway"]) and ip == network["gateway"],
             "via": entry["via"],
             "latencyMs": entry["latencyMs"],
             "ports": ports,
+            "network": net_name,
+            "vlan": vlan,
+            "remoteNet": bool(host_set) and ip not in host_set,
         }
         assembled["type"] = classify.classify(assembled)
         out_hosts.append(assembled)
@@ -385,6 +496,13 @@ def scan_lan(interfaces=None, gateways=None, connector=connect_ms,
     open_ports = sum(len(h["ports"]) for h in out_hosts)
     return {
         "network": network,
+        "controller": {
+            "configured": bool(census.get("configured")),
+            "host": str(census.get("host") or ""),
+            "site": str(census.get("site") or ""),
+            "clients": len(client_by_ip),
+            "error": census.get("error"),
+        },
         "hosts": out_hosts,
         "stats": {
             "targets": len(targets) if chosen is not None else 0,
@@ -392,6 +510,7 @@ def scan_lan(interfaces=None, gateways=None, connector=connect_ms,
             "openPorts": open_ports,
             "scanMs": int((time.monotonic() - started) * 1000),
             "discoveryMs": discovery_ms,
+            "controllerMs": controller_ms,
             "deadlineHit": time.monotonic() >= deadline,
         },
     }

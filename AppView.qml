@@ -14,6 +14,8 @@ Rectangle {
 
   property var hosts: []
   property var network: ({})
+  property var identity: ({})
+  property var controller: ({})
   property string scannedAt: ""
   property bool scanning: false
   property bool scanFailed: false
@@ -37,6 +39,12 @@ Rectangle {
   property string searchText: ""
   property string selectedIp: ""
 
+  // What this machine is called: its real hostname (or model) from the
+  // scanner's identity block; empty until the first payload lands. The
+  // machine payload's hostname is the last fallback so an older or
+  // partial identity block still yields the real name.
+  readonly property string selfName: String(identity.label || identity.hostname || machineHostname || "")
+
   focus: true
   Keys.onEscapePressed: root.closeRequested()
   Keys.onPressed: function(event) {
@@ -56,7 +64,8 @@ Rectangle {
     for (var i = 0; i < hosts.length; i++) {
       var h = hosts[i]
       var hay = (String(h.ip) + " " + String(h.hostname || "") + " "
-                 + String(h.vendor || "") + " " + String(h.type || "")).toLowerCase()
+                 + String(h.vendor || "") + " " + String(h.type || "") + " "
+                 + String(h.network || "")).toLowerCase()
       var ports = h.ports || []
       for (var j = 0; j < ports.length; j++)
         hay += " " + ports[j].port + " " + String(ports[j].service || "").toLowerCase()
@@ -84,6 +93,18 @@ Rectangle {
     return n
   }
 
+  // Distinct controller-labelled networks in view; 1 means "only the
+  // local subnet is known", so the header stays quiet.
+  readonly property int networkCount: {
+    var seen = {}
+    var n = 0
+    for (var i = 0; i < hosts.length; i++) {
+      var name = String(hosts[i].network || "")
+      if (name !== "" && !seen[name]) { seen[name] = true; n++ }
+    }
+    return Math.max(1, n)
+  }
+
   Row {
     anchors.fill: parent
 
@@ -97,6 +118,7 @@ Rectangle {
       scanning: root.scanning
       compact: root.width < 1160
       rail: root.width < 940
+      selfName: root.selfName
       onNavigate: function(page) { root.page = page }
       onProfileSelected: root.profileSelected(profile)
       onScanRequested: root.rescanRequested()
@@ -121,6 +143,7 @@ Rectangle {
         hostsOnline: root.onlineHosts.length
         hostsTotal: root.hosts.length
         openPorts: root.totalOpenPorts
+        networkCount: root.networkCount
         scannedAt: root.scannedAt
         scanning: root.scanning
         page: root.page
@@ -169,6 +192,7 @@ Rectangle {
           hosts: root.visibleHosts
           onlineOnly: true
           network: root.network
+          selfName: root.selfName
           scanning: root.scanning
           scanFailed: root.scanFailed
           newIps: root.newIps
@@ -182,6 +206,7 @@ Rectangle {
           visible: root.page === "devices"
           fontMono: root.fontMono
           hosts: root.visibleHosts
+          selfName: root.selfName
           onHostSelected: function(ip) { root.selectedIp = ip }
         }
 
@@ -204,6 +229,7 @@ Rectangle {
           visible: root.page === "machine"
           fontMono: root.fontMono
           hostname: root.machineHostname
+          identity: root.identity
           listeners: root.listeners
           connections: root.connections
           scannedAt: root.machineScannedAt
@@ -232,6 +258,7 @@ Rectangle {
           fontMono: root.fontMono
           profile: root.profile
           network: root.network
+          controller: root.controller
           onProfileSelected: root.profileSelected(profile)
         }
       }

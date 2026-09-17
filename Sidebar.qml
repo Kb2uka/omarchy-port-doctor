@@ -14,6 +14,7 @@ Rectangle {
   property bool scanning: false
   property bool compact: false
   property bool rail: false
+  property string selfName: ""
 
   signal navigate(string page)
   signal profileSelected(string profile)
@@ -24,7 +25,7 @@ Rectangle {
     { page: "devices", label: "Devices", glyph: "\u{F0379}" },
     { page: "ports", label: "Open Ports", glyph: "\u{F0528}" },
     { page: "services", label: "Services", glyph: "\u{F004B}" },
-    { page: "machine", label: "This Mac", glyph: "\u{F0322}" },
+    { page: "machine", label: root.selfName !== "" ? root.selfName : "This Machine", glyph: "\u{F0322}" },
     { page: "watch", label: "Vulnerabilities", glyph: "\u{F0499}" },
     { page: "history", label: "History", glyph: "\u{F02DA}" },
     { page: "settings", label: "Settings", glyph: "\u{F0493}" }

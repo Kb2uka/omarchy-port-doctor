@@ -3,14 +3,16 @@ import QtQuick.Controls
 import "Palette.js" as P
 
 // Network map: gateway at the center, one node per device with a type icon,
-// subtle links between them. Map is one of three presentations (map, list,
-// table) switched by the header control.
+// subtle links between them. Hosts the controller reported on other
+// networks orbit outside the local ring on dashed routed links. Map is one
+// of three presentations (map, list, table) switched by the header control.
 Item {
   id: root
   property string fontMono: "monospace"
   property var hosts: []          // search-filtered, all rows
   property bool onlineOnly: true  // the map draws online hosts only
   property var network: ({})
+  property string selfName: ""
   property bool scanning: false
   property bool scanFailed: false
   property var newIps: ({})
@@ -25,25 +27,35 @@ Item {
     return out
   }
 
+  function hostLabel(host) {
+    if (host.isSelf) return root.selfName !== "" ? root.selfName : "This machine"
+    var nm = String(host.hostname || "")
+    if (nm !== "") return nm.replace(/\.local$/, "")
+    if (host.isGateway) return "Gateway"
+    return String(host.vendor || "")
+  }
+
   // ---------------------------------------------------------- geometry
-  // Gateway at center; everyone else on one or two orbits. Angles are
-  // stable per IP so nodes do not jump between scans.
+  // Gateway at center; local devices on one or two orbits, remote-network
+  // devices on an outer orbit of their own. Angles are stable per list
+  // order so nodes do not jump between scans.
   property var nodePlacements: []
 
   function layout() {
     var w = mapArea.width, h = mapArea.height
     if (w < 100 || h < 100) return
     var cx = w / 2, cy = h / 2 - 6
-    var self = null, gateway = null, others = []
+    var self = null, gateway = null, locals = [], remotes = []
     var list = mapHosts
     for (var i = 0; i < list.length; i++) {
       var hst = list[i]
       if (hst.isSelf) self = hst
       else if (hst.isGateway) gateway = hst
-      else others.push(hst)
+      else if (hst.remoteNet === true) remotes.push(hst)
+      else locals.push(hst)
     }
     var placed = []
-    var n = others.length
+    var n = locals.length
     var baseRx = Math.min(w * 0.38, Math.max(210, n * 26))
     var baseRy = Math.min(h * 0.36, Math.max(120, n * 13))
     var twoRings = n > 10
@@ -55,9 +67,19 @@ Item {
         + ((twoRings && !inner) ? Math.PI / Math.max(1, total) : 0)
       var rx = inner ? baseRx * 0.60 : baseRx
       var ry = inner ? baseRy * 0.58 : baseRy
-      placed.push({ host: others[j],
+      placed.push({ host: locals[j],
                     x: cx + Math.cos(angle) * rx,
                     y: cy + Math.sin(angle) * ry })
+    }
+    // Remote (other-network) hosts: their own outer orbit.
+    var rn = remotes.length
+    var rxOuter = Math.min(w * 0.47, baseRx + 96)
+    var ryOuter = Math.min(h * 0.45, baseRy + 76)
+    for (var r = 0; r < rn; r++) {
+      var rAngle = -Math.PI / 2 + (2 * Math.PI * r / rn) + Math.PI / Math.max(1, rn)
+      placed.push({ host: remotes[r],
+                    x: cx + Math.cos(rAngle) * rxOuter,
+                    y: cy + Math.sin(rAngle) * ryOuter })
     }
     var result = []
     if (gateway) result.push({ host: gateway, x: cx, y: cy, big: true })
@@ -104,6 +126,7 @@ Item {
             if (nd === core) continue
             var ip = String(nd.host.ip || "")
             var hot = (ip === root.selectedIp || ip === mapHover.hoverIp)
+            var routed = nd.host.remoteNet === true
             c.beginPath()
             c.moveTo(core.x, core.y)
             // Gentle curve: control point nudged perpendicular to the chord.
@@ -111,11 +134,16 @@ Item {
             var dx = nd.x - core.x, dy = nd.y - core.y
             var len = Math.max(1, Math.sqrt(dx * dx + dy * dy))
             c.quadraticCurveTo(mx - dy * 0.06, my + dx * 0.06, nd.x, nd.y)
+            // A dashed link is a routed path: the host lives on another
+            // network and everything to it goes through the gateway.
+            c.setLineDash(routed && !hot ? [4, 4] : [])
             c.strokeStyle = hot ? P.alpha(P.teal, 0.75)
-              : (nd.host.isSelf ? P.alpha(P.accent, 0.45) : P.alpha("#3c5268", 0.55))
+              : (nd.host.isSelf ? P.alpha(P.accent, 0.45)
+              : (routed ? P.alpha(P.blue, 0.5) : P.alpha("#3c5268", 0.55)))
             c.lineWidth = hot ? 1.6 : 1.1
             c.stroke()
           }
+          c.setLineDash([])
         }
       }
 
@@ -186,17 +214,24 @@ Item {
               width: parent.width
               horizontalAlignment: Text.AlignHCenter
               elide: Text.ElideRight
-              text: {
-                if (parent.parent.host.isSelf) return "This Mac"
-                var nm = String(parent.parent.host.hostname || "")
-                if (nm !== "") return nm.replace(/\.local$/, "")
-                if (parent.parent.host.isGateway) return "Gateway"
-                return String(parent.parent.host.vendor || "")
-              }
+              text: root.hostLabel(parent.parent.host)
               color: parent.parent.selected ? P.text : P.secondary
               font.family: P.sans
               font.pixelSize: 11
               font.weight: parent.parent.selected ? Font.Medium : Font.Normal
+            }
+            Text {
+              textFormat: Text.PlainText
+              visible: parent.parent.host.remoteNet === true
+                && String(parent.parent.host.network || "") !== ""
+              anchors.horizontalCenter: parent.horizontalCenter
+              width: parent.width
+              horizontalAlignment: Text.AlignHCenter
+              elide: Text.ElideRight
+              text: String(parent.parent.host.network || "")
+              color: P.blue
+              font.family: P.sans
+              font.pixelSize: 9
             }
           }
 
@@ -248,6 +283,7 @@ Item {
         hosts: root.hosts
         title: "Devices on Your Network"
         compact: true
+        selfName: root.selfName
         selectedIp: root.selectedIp
         onHostSelected: function(ip) { root.hostSelected(ip) }
       }
@@ -311,10 +347,8 @@ Item {
               horizontalAlignment: Text.AlignHCenter
               elide: Text.ElideRight
               text: {
-                if (parent.parent.host.isSelf) return "This Mac"
-                var nm = String(parent.parent.host.hostname || "")
-                if (nm !== "") return nm.replace(/\.local$/, "")
-                return String(parent.parent.host.vendor || "Unknown device")
+                var label = root.hostLabel(parent.parent.host)
+                return label !== "" ? label : "Unknown device"
               }
               color: P.text
               font.family: P.sans
@@ -323,7 +357,16 @@ Item {
             Text {
               textFormat: Text.PlainText
               anchors.horizontalCenter: parent.horizontalCenter
-              text: (parent.parent.host.ports || []).length + " open"
+              width: 148
+              horizontalAlignment: Text.AlignHCenter
+              elide: Text.ElideRight
+              text: {
+                var base = (parent.parent.host.ports || []).length + " open"
+                var net = String(parent.parent.host.network || "")
+                if (parent.parent.host.remoteNet === true && net !== "")
+                  return base + " · " + net
+                return base
+              }
               color: P.muted
               font.family: P.sans
               font.pixelSize: 10
@@ -351,6 +394,7 @@ Item {
     hosts: root.hosts
     title: ""
     compact: false
+    selfName: root.selfName
     selectedIp: root.selectedIp
     onHostSelected: function(ip) { root.hostSelected(ip) }
   }

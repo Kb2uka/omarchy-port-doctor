@@ -3,7 +3,7 @@
 import time
 import unittest
 
-from port_doctor import net, scan
+from port_doctor import net, scan, services
 
 
 IFACES = [{"ifname": "wlan0",
@@ -17,9 +17,12 @@ NEIGH = {
     "10.70.120.200": {"mac": "", "dev": "wlan0", "state": "FAILED"},
 }
 
+EMPTY_CENSUS = {"configured": False, "host": "", "site": "", "error": None,
+                "clients": [], "networks": []}
+
 
 def fake_scan(interfaces=IFACES, gateways=GATEWAYS, connector=None,
-              resolver=None, deadline_s=9.0):
+              resolver=None, deadline_s=9.0, controller=None):
     original_neigh = net.neighbors
     net.neighbors = lambda: dict(NEIGH)
     try:
@@ -27,7 +30,8 @@ def fake_scan(interfaces=IFACES, gateways=GATEWAYS, connector=None,
             interfaces=interfaces, gateways=gateways,
             connector=connector or (lambda ip, port, t: ("filtered", 0.0)),
             resolver=resolver or (lambda ips, deadline: {}),
-            deadline_s=deadline_s)
+            deadline_s=deadline_s,
+            controller=controller or (lambda timeout: dict(EMPTY_CENSUS)))
     finally:
         net.neighbors = original_neigh
 
@@ -217,3 +221,188 @@ class InterfaceChoiceTests(unittest.TestCase):
         payload = fake_scan(interfaces=ifaces, gateways=[], connector=connector)
         self.assertEqual(calls, [])
         self.assertTrue(payload["network"]["passiveOnly"])
+
+
+CENSUS = {
+    "configured": True, "host": "10.70.120.1", "site": "default",
+    "error": None,
+    "clients": [
+        {"ip": "10.70.0.42", "mac": "a4:b1:97:11:22:33", "name": "studio",
+         "network": "Default", "vlan": 0},
+        {"ip": "10.70.90.20", "mac": "40:b4:cd:44:55:66", "name": "echo-k",
+         "network": "IoT", "vlan": 3},
+        # On the local subnet but silent to probes (sleeping, firewalled).
+        {"ip": "10.70.120.77", "mac": "b8:27:eb:cc:dd:ee",
+         "name": "sleepy-pi", "network": "SHACK", "vlan": 4},
+    ],
+    "networks": [
+        {"name": "Default", "vlan": 0, "subnet": "10.70.0.0/24"},
+        {"name": "IoT", "vlan": 3, "subnet": "10.70.90.0/24"},
+        {"name": "SHACK", "vlan": 4, "subnet": "10.70.120.0/24"},
+    ],
+}
+
+
+def census_controller(timeout=0):
+    return dict(CENSUS)
+
+
+class ControllerMergeTests(unittest.TestCase):
+    def test_remote_hosts_join_with_ports_names_and_labels(self):
+        def connector(ip, port, timeout):
+            if ip == "10.70.0.42" and port == 22:
+                return "open", 1.5
+            if ip == "10.70.0.42":
+                return "closed", 2.0
+            return "filtered", 0.0
+
+        payload = fake_scan(connector=connector, controller=census_controller)
+        hosts = by_ip(payload)
+        studio = hosts["10.70.0.42"]
+        self.assertEqual(studio["via"], "unifi")
+        self.assertTrue(studio["remoteNet"])
+        self.assertEqual(studio["network"], "Default")
+        self.assertEqual(studio["vlan"], 0)
+        # Controller name filled the gap the resolver left.
+        self.assertEqual(studio["hostname"], "studio")
+        # Cross-VLAN MACs come from the controller record, not the
+        # neighbor table.
+        self.assertEqual(studio["mac"], "a4:b1:97:11:22:33")
+        self.assertEqual(studio["vendor"], "Apple")
+        self.assertEqual([p["port"] for p in studio["ports"]], [22])
+        self.assertEqual(studio["latencyMs"], 1.5)
+
+        controller = payload["controller"]
+        self.assertTrue(controller["configured"])
+        self.assertEqual(controller["clients"], 3)
+        self.assertIsNone(controller["error"])
+        self.assertIn("controllerMs", payload["stats"])
+
+    def test_filtered_remote_stays_presence_only(self):
+        calls = []
+
+        def connector(ip, port, timeout):
+            calls.append((ip, port))
+            return "filtered", 0.0
+
+        payload = fake_scan(connector=connector, controller=census_controller)
+        hosts = by_ip(payload)
+        echo = hosts["10.70.90.20"]
+        self.assertEqual(echo["via"], "unifi")
+        self.assertEqual(echo["ports"], [])
+        self.assertEqual(echo["network"], "IoT")
+        # Presence comes from the controller, so only the discovery set is
+        # probed: an isolated network cannot burn the deadline on a full
+        # table of timeouts.
+        probed = {port for ip, port in calls if ip == "10.70.90.20"}
+        self.assertEqual(probed, set(services.DISCOVERY_PORTS))
+
+    def test_controller_vouches_for_a_sleeping_local(self):
+        calls = []
+
+        def connector(ip, port, timeout):
+            calls.append((ip, port))
+            return "filtered", 0.0
+
+        payload = fake_scan(connector=connector, controller=census_controller)
+        hosts = by_ip(payload)
+        sleepy = hosts["10.70.120.77"]
+        self.assertEqual(sleepy["via"], "unifi")
+        self.assertFalse(sleepy["remoteNet"])
+        self.assertEqual(sleepy["network"], "SHACK")
+        # A local-subnet host is worth the full table just like a
+        # neighbor-seeded one.
+        self.assertIn(("10.70.120.77", 32400), calls)
+
+    def test_local_hosts_get_network_labels_by_subnet(self):
+        payload = fake_scan(controller=census_controller)
+        hosts = by_ip(payload)
+        for ip in ("10.70.120.50", "10.70.120.1", "10.70.120.99"):
+            self.assertEqual(hosts[ip]["network"], "SHACK", ip)
+            self.assertEqual(hosts[ip]["vlan"], 4, ip)
+            self.assertFalse(hosts[ip]["remoteNet"], ip)
+
+    def test_passive_mode_never_calls_the_controller(self):
+        calls = []
+
+        def controller(timeout=0):
+            calls.append(timeout)
+            return dict(CENSUS)
+
+        public = [{"ifname": "eth0",
+                   "addrs": [{"local": "203.0.113.10", "prefixlen": 24}]}]
+        payload = fake_scan(interfaces=public, gateways=[],
+                            controller=controller)
+        self.assertEqual(calls, [])
+        self.assertFalse(payload["controller"]["configured"])
+        self.assertTrue(payload["network"]["passiveOnly"])
+
+    def test_controller_failure_does_not_break_the_scan(self):
+        def controller(timeout=0):
+            raise RuntimeError("boom")
+
+        payload = fake_scan(controller=controller)
+        self.assertEqual(payload["controller"]["error"], "boom")
+        hosts = by_ip(payload)
+        self.assertIn("10.70.120.99", hosts)  # local results intact
+
+    def test_remote_host_cap(self):
+        clients = [{"ip": f"10.99.{i // 250}.{(i % 250) + 1}",
+                    "mac": "", "name": f"h{i}", "network": "Big", "vlan": 9}
+                   for i in range(200)]
+        census = dict(CENSUS)
+        census["clients"] = clients
+
+        payload = fake_scan(controller=lambda timeout: census)
+        remotes = [h for h in payload["hosts"] if h["remoteNet"]]
+        self.assertEqual(len(remotes), scan.MAX_REMOTE_HOSTS)
+        self.assertEqual(payload["controller"]["clients"], 200)
+
+    def test_slow_controller_is_abandoned_at_its_budget(self):
+        def controller(timeout=0):
+            time.sleep(5)
+            return dict(CENSUS)
+
+        started = time.monotonic()
+        # deadline 8s -> controller budget 1s; the scan must not wait 5.
+        payload = fake_scan(controller=controller, deadline_s=8.0)
+        self.assertLess(time.monotonic() - started, 4.0)
+        self.assertIn("budget", payload["controller"]["error"])
+        hosts = by_ip(payload)
+        self.assertIn("10.70.120.99", hosts)  # local results intact
+
+    def test_malformed_controller_mac_cannot_kill_the_scan(self):
+        census = dict(CENSUS)
+        census["clients"] = [
+            {"ip": "10.70.0.42", "mac": "zz:zz:zz:zz:zz:zz",
+             "name": "studio", "network": "Default", "vlan": 0},
+        ]
+        payload = fake_scan(controller=lambda timeout: census)
+        hosts = by_ip(payload)
+        # The scan survives and renders the row; the garbage MAC parses as
+        # not-private and vendors nothing.
+        self.assertIn("10.70.0.42", hosts)
+        self.assertEqual(hosts["10.70.0.42"]["vendor"], "")
+        self.assertFalse(hosts["10.70.0.42"]["macPrivate"])
+
+    def test_falsy_controller_return_means_not_configured(self):
+        payload = fake_scan(controller=lambda timeout: None)
+        self.assertFalse(payload["controller"]["configured"])
+        self.assertIsNone(payload["controller"]["error"])
+
+    def test_thread_creation_failure_does_not_break_the_scan(self):
+        class ExplodingThread:
+            def __init__(self, *args, **kwargs):
+                raise RuntimeError("can't start new thread")
+
+        class FakeThreading:
+            Thread = ExplodingThread
+
+        original = scan.threading
+        scan.threading = FakeThreading
+        try:
+            payload = fake_scan(controller=census_controller)
+        finally:
+            scan.threading = original
+        self.assertIn("thread", payload["controller"]["error"])
+        self.assertIn("10.70.120.99", by_ip(payload))
