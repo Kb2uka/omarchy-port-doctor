@@ -7,9 +7,13 @@ talking to what**.
 Click the bar icon and Port Doctor opens a proper application window:
 
 - **Network Map** — a gateway-centered topology of every device found on
-  your LAN, with per-device type icons (router, laptop, NAS, Raspberry Pi,
-  printer, camera, TV, phone, console, IoT), status dots, and a full device
-  table underneath. Map, List, and Table presentations.
+  your LAN. Devices are grouped into one panel per network with a single
+  link from the gateway to each panel, per-device type icons (router,
+  laptop, NAS, Raspberry Pi, printer, camera, TV, phone, console, IoT),
+  status dots, and a full device table underneath. Labels thin out as the
+  network grows and the layout scales to fit, so large networks stay neat;
+  hovering or selecting a device names it in the inspector chip. Map, List,
+  and Table presentations.
 - **Devices** — the complete table: IP, device name, vendor, open ports as
   compact pills, last-seen time, and online status, with quick filters.
 - **Open Ports** — every listening port found, sorted and class-colored.
@@ -67,10 +71,9 @@ UNIFI_API_KEY=...          # a read-only local API key
 
 and optionally `UNIFI_SITE=default` and `UNIFI_VERIFY_TLS=true`. Each scan
 then merges the controller's client census: devices on other networks
-appear with their network name, grouped on an outer orbit of the map with
-dashed routed links, filterable per network in the device table, and their
-open ports are probed exactly like local ones (same private-address
-allowlist, same deadline). Hosts the controller knows that your probes
+appear in their own labelled map panel with dashed routed links, filterable
+per network in the device table, and their open ports are probed exactly
+like local ones (same private-address allowlist, same deadline). Hosts the controller knows that your probes
 cannot reach (guest isolation, firewall zones) still appear, honestly
 marked "reported by controller". Remove the file and Port Doctor is back
 to its own subnet; nothing is ever written or persisted by the plugin.
