@@ -57,23 +57,44 @@ vendor read from DMI — no generic placeholder.
 
 A connect scan can only reach its own subnet. If your network is run by a
 UniFi controller (UDM, Dream Machine, Cloud Key…), Port Doctor can show
-**every network it manages**, not just this VLAN: create
-`~/.config/port-doctor/unifi.env` with two lines —
+**every network it manages**, not just this VLAN.
+
+Create the credential file as mode 0600 *before* putting the API key in
+it, so it is never world-readable. `touch` does not replace an existing
+file:
 
 ```
-UNIFI_HOST=10.0.0.1        # the controller's private IP
-UNIFI_API_KEY=...          # a read-only local API key
+mkdir -p ~/.config/port-doctor
+umask 077
+touch ~/.config/port-doctor/unifi.env
 ```
 
-and optionally `UNIFI_SITE=default` and `UNIFI_VERIFY_TLS=true`. Each scan
-then merges the controller's client census: devices on other networks
-appear with their network name, grouped on an outer orbit of the map with
-dashed routed links, filterable per network in the device table, and their
-open ports are probed exactly like local ones (same private-address
-allowlist, same deadline). Hosts the controller knows that your probes
-cannot reach (guest isolation, firewall zones) still appear, honestly
-marked "reported by controller". Remove the file and Port Doctor is back
-to its own subnet; nothing is ever written or persisted by the plugin.
+If that path already exists, leave its contents and run
+`chmod 600 ~/.config/port-doctor/unifi.env`. Then edit the file so it
+contains these two lines (no comments on the same line as a value):
+
+```
+UNIFI_HOST=10.0.0.1
+UNIFI_API_KEY=...
+```
+
+Optionally add `UNIFI_SITE=default` and `UNIFI_VERIFY_TLS=true` as their
+own lines. Port Doctor loads only a regular file you own with no group
+or other permissions (mode 0600 or 0400). Symlinks, directories, and
+files other people can read are refused. The same checks apply to
+`~/.config/unifi/env` and to `$PORT_DOCTOR_UNIFI_CONFIG`. If a file is
+refused, `chmod 600` it and make sure it is not a symlink; rotate the
+API key if it was ever stored world-readable.
+
+Each scan then merges the controller's client census: devices on other
+networks appear with their network name, grouped on an outer orbit of the
+map with dashed routed links, filterable per network in the device table,
+and their open ports are probed exactly like local ones (same
+private-address allowlist, same deadline). Hosts the controller knows
+that your probes cannot reach (guest isolation, firewall zones) still
+appear, honestly marked "reported by controller". Remove the file and
+Port Doctor is back to its own subnet; nothing is ever written or
+persisted by the plugin.
 
 The machine view parses `/proc/net/{tcp,tcp6,udp,udp6}` and attributes
 sockets to processes owned by your account; sockets owned by other accounts

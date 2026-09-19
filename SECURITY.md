@@ -36,9 +36,17 @@ shell does not sandbox plugins, so install only source you trust.
   `UNIFI_VERIFY_TLS=false` retains compatibility
   with an untrusted self-signed certificate, but permits an attacker on the
   network to impersonate the controller and obtain the API key; a private
-  address alone does not authenticate a peer. Use a read-only API key and
-  restrict the config file to your account (`chmod 600`). In passive mode
-  the controller is never contacted.
+  address alone does not authenticate a peer. Use a read-only API key.
+  The credential file (`~/.config/port-doctor/unifi.env`,
+  `~/.config/unifi/env`, or `$PORT_DOCTOR_UNIFI_CONFIG`) is opened
+  without following symlinks (`O_NOFOLLOW`, `O_NONBLOCK`); the opened
+  descriptor is fstat'd and must be a regular file owned by the current
+  user with no group or other permission bits before any bytes are read.
+  Missing files are skipped. Unsafe files are refused with an error that
+  does not include the key; a later private file may still be used. Port
+  Doctor never creates, overwrites, or changes mode of the file. If a
+  file was ever world-readable, rotate the key and `chmod 600` it. In
+  passive mode the controller is never contacted.
 - Probing is a bare TCP connect: no application bytes are sent or received,
   no banners are read, no raw sockets are used. The only UDP the plugin
   crafts itself is one small mDNS PTR question per nameless host to the
