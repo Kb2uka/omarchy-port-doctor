@@ -16,14 +16,18 @@ ever reads it, and only these keys:
     UNIFI_SITE=default         optional
     UNIFI_VERIFY_TLS=true      optional; verification defaults on
 
-A pre-existing ~/.config/unifi/env with the same keys is also honored.
+The file must be a regular file owned by the current user with no group
+or other permissions (mode 0600). A pre-existing ~/.config/unifi/env
+with the same keys is also honored, under the same rules.
 """
 
+import errno
 import ipaddress
 import json
 import os
 import re
 import ssl
+import stat
 import time
 import urllib.error
 import urllib.parse
@@ -39,6 +43,7 @@ MAX_CLIENTS = 512
 DEFAULT_SITE = "default"
 _CONFIG_NAMES = ("port-doctor/unifi.env", "unifi/env")
 _MAC = re.compile(r"([0-9a-f]{2}:){5}[0-9a-f]{2}")
+_OPEN_FLAGS = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC
 
 
 def _clean(text):
@@ -84,6 +89,65 @@ def _valid_host(text):
     return str(addr) if net.scannable(addr) else None
 
 
+def _open_oserror(path, err):
+    """None if the path is absent; otherwise a sanitized open failure."""
+    if err.errno in (errno.ENOENT, errno.ENOTDIR):
+        return None
+    if err.errno == errno.ELOOP:
+        return f"{path}: must be a regular file, not a symlink"
+    if err.errno == errno.EISDIR:
+        return f"{path}: must be a regular file, not a directory"
+    if err.errno == errno.ENXIO:
+        return f"{path}: must be a regular file, not a fifo"
+    return f"{path}: cannot open credential file"
+
+
+def _credential_fd_error(path, info):
+    """Reject non-regular, foreign-owned, or group/other-permission fds."""
+    mode = info.st_mode
+    if stat.S_ISLNK(mode):
+        return f"{path}: must be a regular file, not a symlink"
+    if stat.S_ISDIR(mode):
+        return f"{path}: must be a regular file, not a directory"
+    if stat.S_ISFIFO(mode):
+        return f"{path}: must be a regular file, not a fifo"
+    if not stat.S_ISREG(mode):
+        return f"{path}: must be a regular file"
+    if info.st_uid != os.geteuid():
+        return f"{path}: must be owned by you"
+    if mode & 0o077:
+        return (f"{path}: must have no group or other permissions "
+                f"(mode 0600)")
+    return None
+
+
+def _read_private_file(path):
+    """(text, error): text is None when this path is not a usable file.
+
+    Absent paths return (None, None). A path that exists but is unsafe
+    or unreadable returns (None, error). Bytes are read only from the
+    descriptor that already passed fstat, never by reopening the path.
+    """
+    fd = None
+    try:
+        fd = os.open(path, _OPEN_FLAGS)
+        error = _credential_fd_error(path, os.fstat(fd))
+        if error:
+            return None, error
+        raw = os.read(fd, _MAX_CONFIG)
+    except OSError as err:
+        if fd is None:
+            return None, _open_oserror(path, err)
+        return None, f"{path}: cannot read credential file"
+    finally:
+        if fd is not None:
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+    return raw.decode("utf-8", "replace"), None
+
+
 def load_config(paths=None, environ=None):
     """(config, error): config is None when no usable file exists.
 
@@ -100,11 +164,12 @@ def load_config(paths=None, environ=None):
     for path in paths:
         if not path:
             continue
-        try:
-            with open(path, "r", errors="replace") as handle:
-                values = _parse_env(handle.read(_MAX_CONFIG))
-        except OSError:
+        text, open_error = _read_private_file(path)
+        if text is None:
+            if open_error is not None and first_error is None:
+                first_error = open_error
             continue
+        values = _parse_env(text)
         host_text = values.get("UNIFI_HOST", "")
         key = values.get("UNIFI_API_KEY", "")[:128]
         host = _valid_host(host_text)

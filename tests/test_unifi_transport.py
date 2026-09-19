@@ -4,6 +4,7 @@ import io
 import json
 import os
 import ssl
+import tempfile
 import unittest
 import urllib.error
 import urllib.request
@@ -67,17 +68,23 @@ class TransportTests(unittest.TestCase):
 
     def test_certificate_verification_defaults_on(self):
         for setting in ("", "UNIFI_VERIFY_TLS=garbage\n", "UNIFI_VERIFY_TLS=true\n"):
-            with self.subTest(setting=setting), \
-                 patch("builtins.open", unittest.mock.mock_open(
-                     read_data="UNIFI_HOST=192.168.4.1\nUNIFI_API_KEY=k\n" + setting)):
-                config, error = unifi.load_config(paths=["fixture.env"])
+            with self.subTest(setting=setting), tempfile.TemporaryDirectory() as root:
+                path = os.path.join(root, "fixture.env")
+                with open(path, "w") as handle:
+                    handle.write("UNIFI_HOST=192.168.4.1\nUNIFI_API_KEY=k\n" + setting)
+                os.chmod(path, 0o600)
+                config, error = unifi.load_config(paths=[path])
             self.assertIsNone(error)
             self.assertTrue(config["verifyTls"])
 
     def test_explicit_certificate_opt_out_still_works(self):
-        with patch("builtins.open", unittest.mock.mock_open(
-                read_data="UNIFI_HOST=192.168.4.1\nUNIFI_API_KEY=k\nUNIFI_VERIFY_TLS=false\n")):
-            config, error = unifi.load_config(paths=["fixture.env"])
+        with tempfile.TemporaryDirectory() as root:
+            path = os.path.join(root, "fixture.env")
+            with open(path, "w") as handle:
+                handle.write("UNIFI_HOST=192.168.4.1\nUNIFI_API_KEY=k\n"
+                             "UNIFI_VERIFY_TLS=false\n")
+            os.chmod(path, 0o600)
+            config, error = unifi.load_config(paths=[path])
         self.assertIsNone(error)
         self.assertFalse(config["verifyTls"])
 
